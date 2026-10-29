@@ -34,7 +34,7 @@ for (const variant of variants) {
     assert.equal(results.filter(r => /已在后台启动/.test(r.stdout)).length, 1);
     const record = await f.record(); const url = new URL(record.url);
     const headers = { Authorization: 'Bearer ' + url.hash.slice(1) };
-    const page = await (await fetch(url.origin)).text(); assert.match(page, /微信小助理/); assert.match(page, /id="imageDirectory"/); assert.match(page, /page-reminders/);
+    const page = await (await fetch(url.origin)).text(); assert.match(page, /微信小助理/); assert.match(page, /id="imageDirectory"/); assert.match(page, /page-reminders/); assert.match(page, /每周指定星期/); assert.match(page, /微信图片与附件保存目录/);
     assert.match(await (await fetch(url.origin + '/app.js')).text(), /sessionStorage/);
     assert.match(await (await fetch(url.origin + '/style.css')).text(), /:root/);
     const state = await (await fetch(url.origin + '/api/state', { headers })).json();
@@ -62,11 +62,11 @@ for (const variant of variants) {
   test(`${variant.name}: invalid arguments and stale launcher lock are handled`, async t => {
     const f = await fixture(t, variant);
     assert.match((await f.run(['--help'])).stdout, /后台启动/);
-    assert.equal((await f.run(['--version'])).stdout.trim(), '0.4.0');
+    assert.equal((await f.run(['--version'])).stdout.trim(), '0.5.0');
     await assert.rejects(f.run(['--port', 'not-a-port']), /端口/);
     const lock = path.join(f.env.WEIXIN_LITE_HOME, 'start.lock');
     await fs.mkdir(lock, { recursive: true }); await fs.writeFile(path.join(lock, 'owner'), '2147483647');
-    await f.run(['--no-open']); assert.equal((await f.record()).version, '0.4.0');
+    await f.run(['--no-open']); assert.equal((await f.record()).version, '0.5.0');
   });
 }
 

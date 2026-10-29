@@ -41,9 +41,12 @@ function renderReminders(data) {
   $('reminder-list').replaceChildren(...(data.reminders.length ? data.reminders.map(r => {
     const card = el('div', 'task'), top = el('div', 'task-top');
     top.append(el('strong', '', r.text), el('span', 'task-status', names[r.status] || r.status)); card.append(top);
-    card.append(el('p', 'subtle', r.localTime), el('p', 'subtle', '编号：' + r.id));
+    if (r.repeat) card.append(el('p', 'subtle', r.repeatLabel));
+    const nextLabel = r.repeat ? (['scheduled', 'queued'].includes(r.status) ? '下一次：' : '原计划：') : '';
+    card.append(el('p', 'subtle', nextLabel + r.localTime), el('p', 'subtle', '编号：' + r.id));
+    if (r.lastSentAt) card.append(el('p', 'subtle', `已发送 ${r.deliveryCount} 次`));
     if (r.lastError) card.append(el('p', 'subtle', r.lastError));
-    if (['scheduled', 'queued', 'blocked'].includes(r.status)) card.append(button('取消提醒', async () => { await api('reminders/cancel', { id: r.id }); toast('提醒已取消'); await refresh(); }));
+    if (['scheduled', 'queued', 'blocked'].includes(r.status)) card.append(button(r.repeat ? '取消整组重复提醒' : '取消提醒', async () => { await api('reminders/cancel', { id: r.id }); toast('提醒已取消'); await refresh(); }));
     return card;
   }) : [el('div', 'empty', '还没有提醒。可以在微信里说：“10 分钟后提醒我总结日报。”')]));
 }
@@ -70,7 +73,7 @@ async function refresh() {
     $('retry-replies').textContent = '重试未送达的回复（' + state.wechat.pendingReplies + '）';
     const login = state.wechat.login;
     const loginNames = { wait: '等待扫码…', scaned: '已扫码，请在手机确认', confirmed: '微信已绑定', expired: '二维码已过期，请重新生成', need_verifycode: '请输入微信显示的验证码', verify_code_blocked: '验证码尝试过多，请重新生成二维码', error: '扫码失败', binded_redirect: '已绑定' };
-    $('wechat-detail').textContent = state.wechat.lastError || (state.wechat.imageSaving ? '正在下载解密图片并保存到本机…' : '') || login?.error || (login ? loginNames[login.status] : '') || (state.wechat.bound ? '只有绑定的微信用户可以控制这台电脑。' : '绑定后，给 Bot 发消息即可调用当前模型。');
+    $('wechat-detail').textContent = state.wechat.lastError || (state.wechat.imageSaving ? '正在下载解密图片或附件并保存到本机…' : '') || login?.error || (login ? loginNames[login.status] : '') || (state.wechat.bound ? '只有绑定的微信用户可以控制这台电脑。' : '绑定后，给 Bot 发消息即可调用当前模型。');
     $('verify-box').hidden = login?.status !== 'need_verifycode';
     if (login?.qr && login.qr !== qrValue) {
       const qr = await api('wechat/qr', {}); qrValue = login.qr;

@@ -8,12 +8,15 @@ const tool = (name, description, properties, required = []) => ({ type: 'functio
   name, description, parameters: { type: 'object', properties, required, additionalProperties: false },
 } });
 export const definitions = [
-  tool('create_reminder', '保存一条到点通过微信发送的一次性提醒。所有时间按 Asia/Shanghai 北京时间理解。用户明确要求提醒时使用；成功后回复编号和具体北京时间。', {
+  tool('create_reminder', '保存通过微信发送的提醒，支持一次性、每天、周一至周五、每周指定星期。所有时间按 Asia/Shanghai 北京时间理解。用户明确要求提醒时使用；成功后回复编号和具体北京时间。', {
     text: field('到点发送的提醒内容，最多 1000 字'), dueAt: field('绝对时间，完整 ISO 日期和时区，例如 2026-10-30T15:00:00+08:00；与 afterSeconds 二选一'),
-    afterSeconds: field('几秒后提醒，整数秒数；例如十分钟为 600。与 dueAt 二选一', 'integer'),
+    afterSeconds: field('一次性提醒的整数秒数，例如十分钟为 600。与 dueAt 二选一', 'integer'),
+    repeat: { type: 'string', enum: ['none', 'daily', 'weekdays', 'weekly'], description: '重复规则：none 一次性（默认），daily 每天，weekdays 周一至周五（不计算节假日或调休），weekly 每周指定星期' },
+    time: field('重复提醒的北京时间 HH:mm，例如 18:00；重复时必填，不填写 dueAt 或 afterSeconds，首次时间由程序计算'),
+    weekdays: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 7 }, description: '仅 weekly 必填，1 周一到 7 周日，例如 [1,3,5]' },
   }, ['text']),
   tool('list_reminders', '查看提醒、发送状态及当前准确北京时间。需要确认当前日期和时间时也可调用。', {}),
-  tool('cancel_reminder', '根据完整编号取消尚未发送的提醒。取消前如不知道编号，先查看提醒列表。', { id: field('提醒完整编号') }, ['id']),
+  tool('cancel_reminder', '根据完整编号取消提醒；重复提醒取消整组后续发送。取消前如不知道编号，先查看提醒列表。', { id: field('提醒完整编号') }, ['id']),
   tool('list_directory', '列出工作目录内的文件和文件夹。', { path: field('相对工作目录的路径，默认 .') }),
   tool('read_file', '读取工作目录内的文本文件。', { path: field('相对或绝对文件路径') }, ['path']),
   tool('write_file', '创建或覆盖工作目录内的文本文件。', { path: field('文件路径'), content: field('完整文件内容') }, ['path', 'content']),

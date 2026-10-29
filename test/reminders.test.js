@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Store } from '../src/store.js';
-import { Reminders, reminderTime, REMINDER_TIME_ZONE } from '../src/reminders.js';
+import { Reminders, reminderTime, REMINDER_TIME_ZONE, nextRepeat, repeatRule, reminderDeliveryId } from '../src/reminders.js';
 import { Wechat } from '../src/wechat.js';
 import { createApp } from '../src/server.js';
 
@@ -174,4 +174,103 @@ test('the live interval delivers a due reminder without another chat or model tu
   f.reminders.start(); await f.reminders.running; f.advance(1000);
   for (let i = 0; i < 150 && f.reminders.items[0].status !== 'sent'; i++) await delay(20);
   assert.equal(f.requests.length, 1); assert.equal(f.reminders.items[0].status, 'sent');
+});
+
+test('daily recurrence keeps its task ID, advances to the same Shanghai time and uses a unique delivery per date', async t => {
+  const f = await fixture(t); const r = f.reminders.create({ text: 'daily', repeat: 'daily', time: '15:00' });
+  assert.match(r.repeatLabel, /每天 15:00.*北京时间/); assert.equal(r.dueAt, '2026-10-29T07:00:00.000Z');
+  f.advance(1000); await f.reminders.tick();
+  let current = f.reminders.list().reminders[0]; assert.equal(current.status, 'scheduled'); assert.equal(current.id, r.id);
+  assert.equal(current.dueAt, '2026-10-30T07:00:00.000Z'); assert.equal(current.deliveryCount, 1); assert.ok(current.lastSentAt);
+  await f.reminders.tick(); assert.equal(f.requests.length, 1);
+  f.advance(86400000); await f.reminders.tick(); current = f.reminders.list().reminders[0];
+  assert.equal(current.deliveryCount, 2); assert.equal(f.requests.length, 2);
+  assert.notEqual(f.requests[0].msg.client_id, f.requests[1].msg.client_id);
+  assert.ok(f.requests.every(request => request.msg.client_id.startsWith('reminder-' + r.id + '-')));
+});
+
+test('weekdays skip weekends and weekly rules choose only requested weekdays', async t => {
+  const f = await fixture(t); f.advance(86400000); // Friday before 15:00 in Shanghai.
+  const r = f.reminders.create({ text: 'workdays', repeat: 'weekdays', time: '15:00' });
+  assert.match(r.repeatLabel, /周一至周五/); f.advance(1000); await f.reminders.tick();
+  assert.equal(f.reminders.items.find(i => i.id === r.id).dueAt, '2026-11-02T07:00:00.000Z');
+  const weekly = f.reminders.create({ text: 'weekly', repeat: 'weekly', time: '15:00', weekdays: [4, 2, 2] });
+  assert.deepEqual(weekly.repeat.weekdays, [2, 4]); assert.equal(weekly.dueAt, '2026-11-03T07:00:00.000Z');
+});
+
+test('repeat calendar crosses year and leap day boundaries without following host timezone', () => {
+  const daily = repeatRule('daily', '00:00');
+  assert.equal(nextRepeat(daily, Date.parse('2026-12-31T23:59:00+08:00')), '2026-12-31T16:00:00.000Z');
+  assert.equal(nextRepeat(daily, Date.parse('2028-02-28T23:59:00+08:00')), '2028-02-28T16:00:00.000Z');
+  assert.equal(nextRepeat(repeatRule('weekly', '09:00', [1]), Date.parse('2026-12-31T12:00:00+08:00')), '2027-01-04T01:00:00.000Z');
+  assert.equal(nextRepeat(repeatRule('daily', '15:00'), Date.parse('2026-10-29T15:00:00+08:00')), '2026-10-30T07:00:00.000Z');
+});
+
+test('invalid or unsupported repeating rules cannot silently become one-time reminders', async t => {
+  const f = await fixture(t);
+  for (const args of [{ repeat: 'monthly', time: '15:00' }, { repeat: 'daily', time: '25:00' }, { repeat: 'daily', time: '3:00' }, { repeat: 'daily' }, { repeat: 'weekly', time: '15:00' }, { repeat: 'weekly', time: '15:00', weekdays: [0] }, { repeat: 'weekly', time: '15:00', weekdays: [1.5] }, { repeat: 'daily', time: '15:00', afterSeconds: 1 }]) assert.throws(() => f.reminders.create({ text: 'bad', ...args }), /重复|规则|每周/);
+  assert.equal(f.reminders.items.length, 0);
+});
+
+test('offline repeating reminders send one catch-up and resume the next future slot', async t => {
+  const f = await fixture(t); const r = f.reminders.create({ text: 'missed days', repeat: 'daily', time: '15:00' });
+  f.advance(5 * 86400000 + 120000);
+  const restored = new Reminders(new Store(f.store.dir), { getWechat: () => f.wx, now: f.now });
+  await restored.tick(); assert.equal(f.requests.length, 1); assert.match(f.requests[0].msg.item_list[0].text_item.text, /补发，原定/);
+  const item = restored.items.find(i => i.id === r.id); assert.equal(item.deliveryCount, 1); assert.equal(item.dueAt, '2026-11-04T07:00:00.000Z');
+  await restored.tick(); assert.equal(f.requests.length, 1);
+});
+
+test('a recovered recurrence receipt advances exactly once without resending the previous occurrence', async t => {
+  const f = await fixture(t); const r = f.reminders.create({ text: 'recover daily', repeat: 'daily', time: '15:00' }); f.advance(1000);
+  const item = f.reminders.items.find(i => i.id === r.id); item.status = 'queued'; f.reminders.save();
+  f.wx.queueReminder(item, f.now()); await f.wx.flush();
+  const wx = new Wechat(new Store(f.store.dir), {}, { fetcher: async () => { throw new Error('must not resend'); } }); wx.status = 'connected';
+  const restored = new Reminders(new Store(f.store.dir), { getWechat: () => wx, now: f.now });
+  await restored.tick(); await restored.tick();
+  assert.equal(restored.items[0].deliveryCount, 1); assert.equal(restored.items[0].dueAt, '2026-10-30T07:00:00.000Z'); assert.equal(f.requests.length, 1);
+});
+
+test('a failed occurrence retries the same ID and advances only after acknowledgement', async t => {
+  let succeed = false;
+  const f = await fixture(t, { fetcher: async () => { if (!succeed) throw new Error('offline'); return Response.json({}); } });
+  const r = f.reminders.create({ text: 'daily retry', repeat: 'daily', time: '15:00' }); f.advance(1000);
+  await f.reminders.tick(); assert.equal(f.reminders.items[0].dueAt, r.dueAt); assert.equal(f.reminders.items[0].status, 'queued');
+  succeed = true; f.advance(2 * 86400000); await f.reminders.tick();
+  assert.equal(f.requests.length, 2); assert.equal(f.requests[0].msg.client_id, f.requests[1].msg.client_id);
+  assert.equal(f.reminders.items[0].dueAt, '2026-11-01T07:00:00.000Z');
+});
+
+test('cancelling a series after one delivery cancels every future occurrence and survives restart', async t => {
+  const f = await fixture(t); const r = f.reminders.create({ text: 'cancel daily', repeat: 'daily', time: '15:00' }); f.advance(1000);
+  await f.reminders.tick(); assert.equal(f.requests.length, 1);
+  assert.equal(f.reminders.cancel(r.id).status, 'cancelled'); f.advance(5 * 86400000);
+  const restored = new Reminders(new Store(f.store.dir), { getWechat: () => f.wx, now: f.now }); await restored.tick(); assert.equal(f.requests.length, 1);
+});
+
+test('cancel after an accepted recurrence but before status commit stops the series, preserving the accepted occurrence', async t => {
+  const f = await fixture(t); const r = f.reminders.create({ text: 'cancel race', repeat: 'daily', time: '15:00' }); f.advance(1000);
+  const item = f.reminders.items[0]; f.wx.queueReminder(item, f.now()); await f.wx.flush();
+  assert.ok(f.wx.reminderDelivered(reminderDeliveryId(item)));
+  const cancelled = f.reminders.cancel(r.id); assert.equal(cancelled.status, 'cancelled'); assert.equal(cancelled.deliveryCount, 1);
+  await f.reminders.tick(); assert.equal(f.requests.length, 1);
+});
+
+test('model tools create a recurring rule and HTTP exposes the next Shanghai occurrence', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'weixin-repeat-api-'));
+  const store = new Store(path.join(root, 'private')); let calls = 0;
+  const app = await createApp({ store, provider: { async complete(messages, definitions) {
+    calls++; assert.match(messages[0].content, /weekly/);
+    assert.ok(definitions.find(d => d.function.name === 'create_reminder').function.parameters.properties.repeat.enum.includes('weekdays'));
+    if (calls === 1) return { role: 'assistant', content: null, tool_calls: [{ id: 'repeat-call', type: 'function', function: { name: 'create_reminder', arguments: JSON.stringify({ text: '日报', repeat: 'weekdays', time: '18:00' }) } }] };
+    const result = JSON.parse(messages.at(-1).content); assert.equal(result.repeat.frequency, 'weekdays');
+    assert.match(result.repeatLabel, /周一至周五 18:00/); assert.match(result.localTime, /18:00:00.*北京时间/);
+    return { role: 'assistant', content: `已创建：${result.repeatLabel}；下一次 ${result.localTime}；编号 ${result.id}` };
+  } } });
+  t.after(async () => { await app.close(); await fs.rm(root, { recursive: true, force: true }); });
+  const url = new URL(await app.listen(0)); app.wechat.account = { token: 'test', userId: 'owner', botId: 'bot' }; app.wechat.state.context = 'ctx';
+  assert.match(await app.agent.run('每个工作日十八点提醒我做日报'), /周一至周五.*下一次/);
+  const headers = { Authorization: 'Bearer ' + app.token };
+  const state = await (await fetch(url.origin + '/api/state', { headers })).json();
+  assert.equal(state.reminders.reminders[0].repeat.time, '18:00'); assert.ok(Date.parse(state.reminders.reminders[0].dueAt) > Date.now());
 });

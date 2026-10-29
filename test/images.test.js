@@ -115,9 +115,9 @@ test('WeChat owner image receipt downloads once, saves in configured folder and 
   await wx.ingest({ ...message(), message_type: 2 }); assert.equal(wx.state.inbox.length, 0);
   await wx.ingest(message()); await wx.ingest(message()); await wx.drain();
   assert.equal(downloads.length, 1); assert.equal(sent.length, 1); assert.match(sent[0], /已保存 1 张图片/);
-  const saved = wx.state.inbox[0].savedImages[0]; assert.equal(saved.path.startsWith(directory + path.sep), true);
+  const saved = wx.state.inbox[0].savedMedia[0]; assert.equal(saved.path.startsWith(directory + path.sep), true);
   assert.equal(sent[0].includes(saved.path), true); assert.deepEqual(await fs.readFile(saved.path), png);
-  assert.equal(wx.state.inbox[0].images, undefined);
+  assert.equal(wx.state.inbox[0].media, undefined);
   assert.equal(JSON.stringify(store.events).includes('opaque'), false);
   const restarted = bot(new Store(store.dir)); await restarted.wx.ingest(message()); await restarted.wx.drain(); assert.equal(restarted.downloads.length, 0);
 });
@@ -136,11 +136,11 @@ test('restart resumes image jobs at the first unsaved image and retains original
   const { store, root } = await setup(t); const original = bot(store);
   await original.wx.ingest(message([image(), image()]));
   const job = original.wx.state.inbox[0]; job.status = 'running';
-  job.savedImages.push(await saveImage(image(), { directory: job.directory, privateDir: store.dir, messageId: job.id, index: 0, day: job.day, fetcher: async () => new Response(encrypt()) }));
+  job.savedMedia.push(await saveImage(image(), { directory: job.directory, privateDir: store.dir, messageId: job.id, index: 0, day: job.day, fetcher: async () => new Response(encrypt()) }));
   original.wx.save(); store.saveConfig({ imageDirectory: path.join(root, 'changed') });
   const { wx, downloads, sent } = bot(new Store(store.dir)); await wx.drain();
   assert.equal(downloads.length, 1); assert.match(sent[0], /已保存 2 张图片/);
-  assert.equal(wx.state.inbox[0].savedImages.every(s => path.dirname(s.path) === path.join(job.directory, job.day)), true);
+  assert.equal(wx.state.inbox[0].savedMedia.every(s => path.dirname(s.path) === path.join(job.directory, job.day)), true);
 });
 
 test('stopping an in-flight download leaves no file and allows safe resumption', async t => {
