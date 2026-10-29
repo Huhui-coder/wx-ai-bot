@@ -16,7 +16,13 @@ async function fixture(t, variant) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'weixin-cli-'));
   const work = path.join(root, 'project with spaces'); await fs.mkdir(work);
   const env = { ...process.env, WEIXIN_LITE_HOME: path.join(root, 'private'), PORT: '0' };
-  const run = (args, override = {}) => exec(variant.program, [...variant.prefix, ...args], { cwd: work, env: { ...env, ...override }, timeout: 25000 });
+  const run = (args, override = {}) => {
+    const childEnv = { ...env, ...override };
+    if (Object.hasOwn(override, 'PATH')) for (const key of Object.keys(childEnv)) {
+      if (key.toLowerCase() === 'path' && key !== 'PATH') delete childEnv[key];
+    }
+    return exec(variant.program, [...variant.prefix, ...args], { cwd: work, env: childEnv, timeout: 25000 });
+  };
   const record = () => fs.readFile(path.join(env.WEIXIN_LITE_HOME, 'service.json'), 'utf8').then(JSON.parse);
   t.after(async () => { try { await run(['stop']); } catch {} await fs.rm(root, { recursive: true, force: true }); });
   return { root, work, env, run, record };
@@ -58,7 +64,7 @@ for (const variant of variants) {
   });
 }
 
-test('standalone binary starts with no Node or Python on PATH', { skip: !process.env.WEIXIN_LITE_TEST_BINARY || process.platform === 'win32' }, async t => {
+test('standalone binary starts with no Node or Python on PATH', { skip: !process.env.WEIXIN_LITE_TEST_BINARY }, async t => {
   const variant = variants.at(-1); const f = await fixture(t, variant);
   const fakeBin = path.join(f.root, 'empty-path'); await fs.mkdir(fakeBin);
   await f.run(['--no-open'], { PATH: fakeBin });
