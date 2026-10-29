@@ -34,11 +34,16 @@ for (const variant of variants) {
     assert.equal(results.filter(r => /已在后台启动/.test(r.stdout)).length, 1);
     const record = await f.record(); const url = new URL(record.url);
     const headers = { Authorization: 'Bearer ' + url.hash.slice(1) };
-    const page = await (await fetch(url.origin)).text(); assert.match(page, /微信小助理/);
+    const page = await (await fetch(url.origin)).text(); assert.match(page, /微信小助理/); assert.match(page, /id="imageDirectory"/);
     assert.match(await (await fetch(url.origin + '/app.js')).text(), /sessionStorage/);
     assert.match(await (await fetch(url.origin + '/style.css')).text(), /:root/);
     const state = await (await fetch(url.origin + '/api/state', { headers })).json();
     assert.equal(await fs.realpath(state.config.workspace), await fs.realpath(f.work)); assert.equal(state.config.apiKey, undefined);
+    const imageDirectory = path.join(await fs.realpath(f.work), '图片 收件箱');
+    const saved = await (await fetch(url.origin + '/api/config', { method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ imageDirectory }) })).json();
+    assert.equal(saved.imageDirectory, imageDirectory);
+    assert.equal((await (await fetch(url.origin + '/api/state', { headers })).json()).config.imageDirectory, imageDirectory);
     assert.match((await f.run(['status'])).stdout, new RegExp('PID ' + record.pid));
     await f.run(['start', '--no-open']); assert.equal((await f.record()).instanceId, record.instanceId);
     assert.match((await f.run(['stop'])).stdout, /已停止/);
@@ -56,11 +61,11 @@ for (const variant of variants) {
   test(`${variant.name}: invalid arguments and stale launcher lock are handled`, async t => {
     const f = await fixture(t, variant);
     assert.match((await f.run(['--help'])).stdout, /后台启动/);
-    assert.equal((await f.run(['--version'])).stdout.trim(), '0.2.0');
+    assert.equal((await f.run(['--version'])).stdout.trim(), '0.3.0');
     await assert.rejects(f.run(['--port', 'not-a-port']), /端口/);
     const lock = path.join(f.env.WEIXIN_LITE_HOME, 'start.lock');
     await fs.mkdir(lock, { recursive: true }); await fs.writeFile(path.join(lock, 'owner'), '2147483647');
-    await f.run(['--no-open']); assert.equal((await f.record()).version, '0.2.0');
+    await f.run(['--no-open']); assert.equal((await f.record()).version, '0.3.0');
   });
 }
 

@@ -86,6 +86,22 @@ API Key 在本机设置页输入，无需发到开发者聊天里。Key 不会�
 | `/approve 编号` | 允许一次具体操作 |
 | `/deny 编号` | 拒绝操作 |
 
+## 微信图片保存
+
+在「连接设置 → 微信图片保存目录」填写本机文件夹的完整路径并保存。默认使用工作目录下的 `微信收件箱`，目录会在首次收图时创建。
+
+手机给已绑定的 Bot 发图片后，程序从微信 CDN 下载，用消息提供的 AES-128-ECB 密钥在本机解密，按日期保存，例如：
+
+```text
+微信收件箱/2026-10-29/image-消息摘要-1.png
+```
+
+Bot 会回复保存成功的图片数量和每张图片的完整路径。支持一条消息最多 9 张图片，每张上限 25 MB；支持 PNG、JPEG、GIF、WebP、BMP、TIFF、HEIC 和 AVIF，按实际文件格式命名。下载、解密或写入失败会明确回复原因，不会谎报成功。
+
+收图不调用模型 API，无需模型 Key，也不需要开启「允许自动执行命令」。图片附带的文字不会在本次收图中交给模型；需要分析图片内容时，目前需使用其他工具。图片保存不会自动加入模型对话历史。
+
+重复消息不会重复保存；程序重启后会恢复中断的收图任务，已保存的文件不会覆盖。保存目录变更仅影响后续收到的消息。程序暂停、退出或电脑休眠期间无法即时收图；恢复后只能处理微信接口仍会投递的消息。
+
 ## Skill
 
 Skill 是一个包含 `SKILL.md` 的目录，可附带 `scripts/`、`references/` 等文件。支持从本机目录或 GitHub 仓库根地址加子目录安装。不会自动运行安装脚本；助手会读说明、检查环境，随后调用本机工具执行。
@@ -99,9 +115,9 @@ Skill 是一个包含 `SKILL.md` 的目录，可附带 `scripts/`、`references/
 - 数据默认放在 `~/.weixin-lite/`，可用 `WEIXIN_LITE_HOME` 修改；配置、对话、微信凭据和轮询状态均保存在本机。请勿把该目录提交到 Git。
 - 本机测试页与微信共用同一段会话，一次处理一个模型任务。
 - 文件工具限制在工作目录内；已安装 Skill 的文件通过独立工具读取。shell 有本机用户权限，非沙箱。
-- 支持文本消息以及微信已经转写成文本的语音。图片、文件收发、屏幕点击、语音识别没有实现。
+- 支持文本、微信已转写的语音，以及接收图片并自动保存。图片发送、模型看图、其他文件收发、屏幕点击和语音识别尚未实现。
 - 命令保留最近的输出，单条命令最长运行 120 秒；任务列表只保留当前进程内的任务。
-- 微信入站消息先持久化再推进游标；重复 ID 不重复执行。重启中断的任务不会自动重跑，以免重复修改。
+- 微信入站消息先持久化再推进游标；重复 ID 不重复执行。重启中断的模型任务不会自动重跑，以免重复修改；图片任务可安全恢复。
 - 微信发送失败的回复会留在本机待发队列，可在设置页重试。无法保证平台永远兼容，也无法保证网络超时后消息严格只送达一次。
 - 程序和电脑需保持运行、联网。关闭终端不影响后台服务，`weixin-lite stop` 才会停止；当前不安装开机启动项。
 - 对话和所需工具结果会交给你选定的模型服务；微信消息经腾讯通道传输。
@@ -149,6 +165,7 @@ npm run build:binary -- bun-windows-x64
                     ├─ 文件读写
                     ├─ shell 命令
                     └─ Skill 列表 / 读取 / 安装
+微信图片 → CDN 下载 → 本机 AES 解密 → 按日期保存 → 回复路径
 ```
 
 两个直接运行依赖：`qrcode`（显示二维码）、`yaml`（解析 Skill 说明头）。使用 Node 内置 HTTP、fetch、文件与子进程 API，无前端构建工具或数据库。
@@ -157,7 +174,7 @@ npm run build:binary -- bun-windows-x64
 
 - [Hermes skills_tool.py](https://github.com/NousResearch/hermes-agent/blob/main/tools/skills_tool.py)：Skill 简介目录与按需读取的思路。
 - [nanobot Skill 加载](https://github.com/HKUDS/nanobot/blob/main/nanobot/agent/skills.py)和[执行循环](https://github.com/HKUDS/nanobot/blob/main/nanobot/agent/loop.py)：能力说明、模型工具调用与结果回传。
-- [Tencent/openclaw-weixin 协议](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md)和[扫码实现](https://github.com/Tencent/openclaw-weixin/blob/main/src/auth/login-qr.ts)：独立 HTTP 通信实现的依据；当前对齐 2.4.10 的客户端元数据。第三方实现不代表腾讯官方支持。
+- [Tencent/openclaw-weixin 协议](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md)和[扫码实现](https://github.com/Tencent/openclaw-weixin/blob/main/src/auth/login-qr.ts)：独立 HTTP 通信实现的依据；当前对齐 2.4.10 的客户端元数据；图片下载及密钥格式参照其 [media-download.ts](https://github.com/Tencent/openclaw-weixin/blob/main/src/media/media-download.ts) 和 [pic-decrypt.ts](https://github.com/Tencent/openclaw-weixin/blob/main/src/cdn/pic-decrypt.ts)。第三方实现不代表腾讯官方支持。
 - [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/)：模型提出工具调用，由本机执行并回传结果。
 
 详细方案筛选见同目录的调研文档。本项目没有引入上述 Agent 框架作为运行依赖。

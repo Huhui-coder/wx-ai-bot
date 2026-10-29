@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { dataDirectory } from './store.js';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const serviceFile = dir => path.join(dir, 'service.json');
 async function readService(dir) {
   try { return JSON.parse(await fs.readFile(serviceFile(dir), 'utf8')); }

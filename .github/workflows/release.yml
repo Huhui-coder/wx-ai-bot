@@ -59,7 +59,9 @@ jobs:
         env:
           WEIXIN_LITE_TEST_BINARY: ./dist/${{ matrix.binary }}
       - name: Test the actual Bun runtime
-        run: bun test test/core.test.js
+        run: |
+          bun test test/core.test.js
+          bun test test/images.test.js
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}

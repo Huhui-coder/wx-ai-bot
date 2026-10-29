@@ -30,6 +30,7 @@
           <label>模型名称<input id="model" required placeholder="deepseek-flash"></label>
           <label>API Key <span id="key-state" class="subtle"></span><input id="apiKey" type="password" autocomplete="new-password" placeholder="在本机填写，留空保留已有 Key"></label>
           <label>工作目录<input id="workspace" required placeholder="/Users/you/Projects"></label>
+          <label>微信图片保存目录<input id="imageDirectory" required placeholder="填写本机文件夹的完整路径"><small class="subtle">发给 Bot 的图片自动下载解密，按日期存放，并回复保存位置；无需调用模型。</small></label>
           <label>助手偏好<textarea id="systemPrompt" rows="2"></textarea></label>
           <label class="checkbox"><input id="allowMutations" type="checkbox"><span>允许自动执行命令、写文件和安装 Skill<small>关闭时，每次操作可在这里或微信中允许。命令使用你的本机权限执行。</small></span></label>
           <div class="actions"><button class="primary">保存设置</button><button id="test-model" type="button" class="quiet">测试连接</button></div>
@@ -41,7 +42,7 @@
           <p id="wechat-detail" class="subtle">绑定后，给 Bot 发消息即可调用当前模型。</p>
           <div class="actions"><button id="wechat-login" class="primary">生成微信二维码</button><button id="wechat-toggle" class="quiet" hidden>暂停连接</button></div>
           <button id="retry-replies" class="quiet" hidden>重试未送达的回复</button>
-          <div class="wechat-note"><h3>绑定之后，你可以这样说</h3><p>“帮我运行项目测试。”</p><p>“把这个 GitHub 仓库里的 Skill 装上。”</p><p>“用刚才安装的 Skill 处理这份文件。”</p></div>
+          <div class="wechat-note"><h3>绑定之后，你可以这样说</h3><p>“帮我运行项目测试。”</p><p>“把这个 GitHub 仓库里的 Skill 装上。”</p><p>“用刚才安装的 Skill 处理这份文件。”</p><p>发一张图片，自动保存到电脑指定文件夹。</p></div>
         </div></div>
       </section>
       <section id="page-skills" class="page" hidden>

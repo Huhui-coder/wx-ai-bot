@@ -89,7 +89,7 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
           void agent.run(input.text.trim()).catch(() => {});
           return json(res, 202, { ok: true });
         }
-        case '/api/stop': return json(res, 200, { text: agent.stop() });
+        case '/api/stop': wechat.imageController?.abort(); return json(res, 200, { text: agent.stop() });
         case '/api/new':
           if (agent.active) throw new Error('请先停止当前处理');
           store.clear(); return json(res, 200, { ok: true });

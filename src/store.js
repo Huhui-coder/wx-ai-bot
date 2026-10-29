@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { imageDirectory } from './images.js';
 
 export const dataDirectory = () => path.resolve(process.env.WEIXIN_LITE_HOME || path.join(os.homedir(), '.weixin-lite'));
 
@@ -16,6 +17,7 @@ export class Store {
       systemPrompt: '用中文沟通，回答简洁，先完成任务再汇报真实结果。',
       ...this.read('config', {}),
     };
+    this.config.imageDirectory ||= path.join(this.config.workspace, '微信收件箱');
     this.events = [];
     this.history = this.read('history', []);
     // A restart must never replay a tool call whose execution status is unknown.
@@ -38,7 +40,7 @@ export class Store {
   }
   saveConfig(patch) {
     const next = { ...this.config };
-    for (const k of ['baseUrl', 'model', 'apiKey', 'workspace', 'systemPrompt']) {
+    for (const k of ['baseUrl', 'model', 'apiKey', 'workspace', 'systemPrompt', 'imageDirectory']) {
       if (typeof patch[k] === 'string') next[k] = patch[k].trim();
     }
     if (typeof patch.allowMutations === 'boolean') next.allowMutations = patch.allowMutations;
@@ -48,6 +50,12 @@ export class Store {
     if (!next.model || next.model.length > 160) throw new Error('请填写模型名称');
     next.workspace = fs.realpathSync(path.resolve(next.workspace));
     if (!fs.statSync(next.workspace).isDirectory()) throw new Error('工作目录不存在');
+    next.imageDirectory = imageDirectory(next.imageDirectory, this.dir);
+    // Validate existing aliases now; newly created folders are checked again at save time.
+    if (fs.existsSync(next.imageDirectory)) {
+      if (!fs.statSync(next.imageDirectory).isDirectory()) throw new Error('图片保存路径必须是文件夹');
+      next.imageDirectory = imageDirectory(fs.realpathSync(next.imageDirectory), fs.realpathSync(this.dir));
+    }
     this.write('config', next); this.config = next;
     return this.publicConfig();
   }

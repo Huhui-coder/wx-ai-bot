@@ -36,7 +36,7 @@ async function refresh() {
   try {
     state = await api('state');
     if (!loaded) {
-      for (const name of ['baseUrl', 'model', 'workspace', 'systemPrompt']) $(name).value = state.config[name];
+      for (const name of ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory']) $(name).value = state.config[name];
       $('allowMutations').checked = state.config.allowMutations;
       $('provider').value = state.config.baseUrl.includes('api.deepseek.com') ? 'deepseek' : 'custom';
       loaded = true;
@@ -55,7 +55,7 @@ async function refresh() {
     $('retry-replies').textContent = '重试未送达的回复（' + state.wechat.pendingReplies + '）';
     const login = state.wechat.login;
     const loginNames = { wait: '等待扫码…', scaned: '已扫码，请在手机确认', confirmed: '微信已绑定', expired: '二维码已过期，请重新生成', need_verifycode: '请输入微信显示的验证码', verify_code_blocked: '验证码尝试过多，请重新生成二维码', error: '扫码失败', binded_redirect: '已绑定' };
-    $('wechat-detail').textContent = state.wechat.lastError || login?.error || (login ? loginNames[login.status] : '') || (state.wechat.bound ? '只有绑定的微信用户可以控制这台电脑。' : '绑定后，给 Bot 发消息即可调用当前模型。');
+    $('wechat-detail').textContent = state.wechat.lastError || (state.wechat.imageSaving ? '正在下载解密图片并保存到本机…' : '') || login?.error || (login ? loginNames[login.status] : '') || (state.wechat.bound ? '只有绑定的微信用户可以控制这台电脑。' : '绑定后，给 Bot 发消息即可调用当前模型。');
     $('verify-box').hidden = login?.status !== 'need_verifycode';
     if (login?.qr && login.qr !== qrValue) {
       const qr = await api('wechat/qr', {}); qrValue = login.qr;
@@ -78,10 +78,10 @@ async function refresh() {
 }
 $('settings-form').onsubmit = async event => {
   event.preventDefault(); const data = {};
-  for (const name of ['baseUrl', 'model', 'workspace', 'systemPrompt']) data[name] = $(name).value;
+  for (const name of ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory']) data[name] = $(name).value;
   if ($('apiKey').value.trim()) data.apiKey = $('apiKey').value.trim();
   data.allowMutations = $('allowMutations').checked;
-  try { await api('config', data); $('apiKey').value = ''; toast('设置已保存'); await refresh(); } catch (e) { toast(e.message); }
+  try { const saved = await api('config', data); $('imageDirectory').value = saved.imageDirectory; $('apiKey').value = ''; toast('设置已保存'); await refresh(); } catch (e) { toast(e.message); }
 };
 $('provider').onchange = () => { if ($('provider').value === 'deepseek') { $('baseUrl').value = 'https://api.deepseek.com'; $('model').value = 'deepseek-flash'; } };
 $('test-model').onclick = async () => { $('test-model').disabled = true; try { toast('正在测试已保存的模型配置…'); const r = await api('model/test', {}); toast(r.text); } catch (e) { toast(e.message); } finally { $('test-model').disabled = false; } };
