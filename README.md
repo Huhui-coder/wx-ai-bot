@@ -28,7 +28,7 @@ irm https://raw.githubusercontent.com/Huhui-coder/wx-ai-bot/main/install.ps1 | i
 | --- | --- |
 | macOS Apple Silicon | `weixin-lite-darwin-arm64` |
 | macOS Intel | `weixin-lite-darwin-x64` |
-| Windows x64 | `weixin-lite-windows-x64-baseline.exe` |
+| Windows x64 | `weixin-lite-windows-x64.exe` |
 
 macOS 手动下载后先 `chmod +x 文件名`，再运行文件；Windows 可直接运行 exe。当前发布包没有 Apple 公证或 Windows 代码签名，系统可能提示确认来源。Windows ARM 暂未提供原生版本。
 
@@ -131,7 +131,7 @@ npm run build:binary
 # 指定平台：
 npm run build:binary -- bun-darwin-arm64
 npm run build:binary -- bun-darwin-x64
-npm run build:binary -- bun-windows-x64-baseline
+npm run build:binary -- bun-windows-x64
 ```
 
 编译结果位于 `dist/`，网页和依赖全部内置。可用 `WEIXIN_LITE_TEST_BINARY=./dist/对应文件 npm test` 同时测试源码与真实单文件程序。GitHub Actions 会分别在 Apple Silicon、Intel Mac、Windows x64 上原生构建并执行测试；推送 `v*` 标签时，三个平台全部通过后才发布 Releases，并附 SHA256SUMS。

@@ -29,8 +29,8 @@ jobs:
             binary: weixin-lite-darwin-x64
           - name: Windows x64
             os: windows-2025
-            target: bun-windows-x64-baseline
-            binary: weixin-lite-windows-x64-baseline.exe
+            target: bun-windows-x64
+            binary: weixin-lite-windows-x64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

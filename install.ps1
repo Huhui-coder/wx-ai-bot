@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 if (-not [Environment]::Is64BitOperatingSystem) { throw '需要 64 位 Windows。' }
 $repo = 'Huhui-coder/wx-ai-bot'
-$asset = 'weixin-lite-windows-x64-baseline.exe'
+$asset = 'weixin-lite-windows-x64.exe'
 $base = "https://github.com/$repo/releases/latest/download"
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) ('weixin-lite-' + [Guid]::NewGuid().ToString('N'))
 $dest = Join-Path $env:LOCALAPPDATA 'WeixinLite'

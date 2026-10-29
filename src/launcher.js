@@ -37,16 +37,19 @@ async function lock(dir) {
   while (Date.now() < deadline) {
     try {
       await fs.mkdir(name, { mode: 0o700 });
-      await fs.writeFile(path.join(name, 'owner'), String(process.pid), { mode: 0o600 });
+      // Publish the owner atomically: a concurrent launcher must not interpret
+      // a briefly empty owner file as a dead process and remove a live lock.
+      await fs.writeFile(path.join(name, 'owner.tmp'), String(process.pid), { mode: 0o600 });
+      await fs.rename(path.join(name, 'owner.tmp'), path.join(name, 'owner'));
       return async () => fs.rm(name, { recursive: true, force: true });
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
       try {
-        const owner = Number(await fs.readFile(path.join(name, 'owner'), 'utf8'));
-        if (!isAlive(owner)) { await fs.rm(name, { recursive: true, force: true }); continue; }
+        const raw = (await fs.readFile(path.join(name, 'owner'), 'utf8')).trim();
+        if (/^[1-9]\d*$/.test(raw) && !isAlive(Number(raw))) { await fs.rm(name, { recursive: true, force: true }); continue; }
       } catch (readError) {
         if (readError.code === 'ENOENT') {
-          try { if (Date.now() - (await fs.stat(name)).mtimeMs > 2000) await fs.rm(name, { recursive: true, force: true }); } catch {}
+          try { if (Date.now() - (await fs.stat(name)).mtimeMs > 10000) await fs.rm(name, { recursive: true, force: true }); } catch {}
         } else throw readError;
       }
       await delay(100);
