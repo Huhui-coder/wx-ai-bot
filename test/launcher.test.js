@@ -62,11 +62,11 @@ for (const variant of variants) {
   test(`${variant.name}: invalid arguments and stale launcher lock are handled`, async t => {
     const f = await fixture(t, variant);
     assert.match((await f.run(['--help'])).stdout, /后台启动/);
-    assert.equal((await f.run(['--version'])).stdout.trim(), '0.5.0');
+    assert.equal((await f.run(['--version'])).stdout.trim(), '0.5.1');
     await assert.rejects(f.run(['--port', 'not-a-port']), /端口/);
     const lock = path.join(f.env.WEIXIN_LITE_HOME, 'start.lock');
     await fs.mkdir(lock, { recursive: true }); await fs.writeFile(path.join(lock, 'owner'), '2147483647');
-    await f.run(['--no-open']); assert.equal((await f.record()).version, '0.5.0');
+    await f.run(['--no-open']); assert.equal((await f.record()).version, '0.5.1');
   });
 }
 

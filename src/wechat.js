@@ -54,7 +54,7 @@ export class Wechat {
     const res = await this.fetcher(`${wechatURL(base)}/${endpoint}`, { method, headers,
       redirect: 'error', signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(timeout)]),
       ...(body !== undefined ? { body: JSON.stringify({ ...body,
-        ...(metadata ? { base_info: { channel_version: VERSION, bot_agent: 'WeixinLite/0.5.0' } } : {}) }) } : {}),
+        ...(metadata ? { base_info: { channel_version: VERSION, bot_agent: 'WeixinLite/0.5.1' } } : {}) }) } : {}),
     });
     if (!res.ok) throw new Error(`微信接口 HTTP ${res.status}`);
     const data = parseWechatJSON(await res.text());
@@ -227,6 +227,8 @@ export class Wechat {
         const entry = job.media[index];
         const saved = await (entry.type === 'file' ? saveAttachment : saveImage)(entry.item, { directory: job.directory, privateDir: this.store.dir,
           messageId: job.id, index, day: job.day, fetcher: this.fetcher, signal: controller.signal });
+        // A pause or rebind may arrive while the atomic file commit is finishing.
+        controller.signal.throwIfAborted();
         job.savedMedia.push(saved); this.save();
         this.store.event(entry.type === 'file' ? 'attachment_saved' : 'image_saved', { path: saved.path, bytes: saved.bytes });
       } catch (e) {

@@ -108,3 +108,15 @@ test('interrupted attachment downloads resume safely after restart', async t => 
   assert.equal(wx.state.inbox[0].status, 'pending');
   const restored = bot(new Store(store.dir)); await restored.wx.drain(); assert.match(restored.sent[0], /已保存 1 个文件/);
 });
+
+test('pausing during the final file commit does not send a receipt until safely resumed', async t => {
+  const { store, directory } = await setup(t); const { wx, sent } = bot(store);
+  const originalLink = fs.link;
+  fs.link = async (...args) => { await originalLink(...args); wx.stop(); };
+  try { await wx.ingest(msg()); await wx.drain(); }
+  finally { fs.link = originalLink; }
+  assert.equal(sent.length, 0); assert.equal(wx.state.inbox[0].status, 'pending');
+  const day = (await fs.readdir(directory))[0]; const before = await fs.readdir(path.join(directory, day)); assert.equal(before.length, 1);
+  const restored = bot(new Store(store.dir)); await restored.wx.drain();
+  assert.match(restored.sent[0], /已保存 1 个文件/); assert.deepEqual(await fs.readdir(path.join(directory, day)), before);
+});
