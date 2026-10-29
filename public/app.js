@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 const auth = location.hash.slice(1) || sessionStorage.getItem('weixin-lite-token') || '';
 if (location.hash) { sessionStorage.setItem('weixin-lite-token', auth); history.replaceState(null, '', location.pathname); }
-let state, loaded = false, qrValue = '', messagesKey = '', toastTimer;
+let state, loaded = false, qrValue = '', messagesKey = '', remindersKey = '', toastTimer;
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
 async function api(route, data) {
   const response = await fetch('/api/' + route, { method: data === undefined ? 'GET' : 'POST',
@@ -12,9 +12,9 @@ async function api(route, data) {
 function el(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text != null) node.textContent = text; return node; }
 function button(text, action, className = 'quiet') { const b = el('button', className, text); b.type = 'button'; b.onclick = () => action().catch(e => toast(e.message)); return b; }
 function page(name) {
-  for (const key of ['chat', 'settings', 'skills']) $('page-' + key).hidden = key !== name;
+  for (const key of ['chat', 'settings', 'skills', 'reminders']) $('page-' + key).hidden = key !== name;
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.page === name));
-  $('breadcrumb').textContent = '工作台 / ' + ({ chat: '对话', settings: '连接设置', skills: 'Skills' }[name]);
+  $('breadcrumb').textContent = '工作台 / ' + ({ chat: '对话', settings: '连接设置', skills: 'Skills', reminders: '提醒' }[name]);
 }
 document.querySelectorAll('.nav').forEach(b => b.onclick = () => page(b.dataset.page));
 document.querySelector('.brand').onclick = e => { e.preventDefault(); page('chat'); };
@@ -31,6 +31,21 @@ function renderMessages(messages) {
     row.append(el('div', 'avatar', message.role === 'user' ? '你' : '微'), content); box.append(row);
   }
   if (nearBottom) box.scrollTop = box.scrollHeight;
+}
+function renderReminders(data) {
+  $('reminder-clock').textContent = '当前时间：' + data.currentTime;
+  const key = JSON.stringify(data.reminders); if (key === remindersKey) return; remindersKey = key;
+  const names = { scheduled: '待提醒', queued: '待发送', sent: '已发送', cancelled: '已取消', blocked: '绑定已改变' };
+  const pending = data.reminders.filter(r => ['scheduled', 'queued'].includes(r.status)).length;
+  $('reminder-count').textContent = pending + ' 条待提醒';
+  $('reminder-list').replaceChildren(...(data.reminders.length ? data.reminders.map(r => {
+    const card = el('div', 'task'), top = el('div', 'task-top');
+    top.append(el('strong', '', r.text), el('span', 'task-status', names[r.status] || r.status)); card.append(top);
+    card.append(el('p', 'subtle', r.localTime), el('p', 'subtle', '编号：' + r.id));
+    if (r.lastError) card.append(el('p', 'subtle', r.lastError));
+    if (['scheduled', 'queued', 'blocked'].includes(r.status)) card.append(button('取消提醒', async () => { await api('reminders/cancel', { id: r.id }); toast('提醒已取消'); await refresh(); }));
+    return card;
+  }) : [el('div', 'empty', '还没有提醒。可以在微信里说：“10 分钟后提醒我总结日报。”')]));
 }
 async function refresh() {
   try {
@@ -62,6 +77,7 @@ async function refresh() {
       const image = el('img'); image.src = qr.image; image.alt = '使用微信扫描此二维码绑定助手'; $('qr-box').replaceChildren(image);
     }
     renderMessages(state.messages);
+    renderReminders(state.reminders);
     $('approvals').replaceChildren(...state.approvals.map(a => {
       const card = el('div', 'approval'); card.append(el('h3', '', '允许这次操作？ · ' + a.name), el('pre', '', JSON.stringify(a.args, null, 2)));
       card.append(button('允许一次', async () => { await api('approve', { id: a.id, approved: true }); await refresh(); }, 'primary'), button('拒绝', async () => { await api('approve', { id: a.id, approved: false }); await refresh(); })); return card;

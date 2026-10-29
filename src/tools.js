@@ -8,6 +8,12 @@ const tool = (name, description, properties, required = []) => ({ type: 'functio
   name, description, parameters: { type: 'object', properties, required, additionalProperties: false },
 } });
 export const definitions = [
+  tool('create_reminder', '保存一条到点通过微信发送的一次性提醒。所有时间按 Asia/Shanghai 北京时间理解。用户明确要求提醒时使用；成功后回复编号和具体北京时间。', {
+    text: field('到点发送的提醒内容，最多 1000 字'), dueAt: field('绝对时间，完整 ISO 日期和时区，例如 2026-10-30T15:00:00+08:00；与 afterSeconds 二选一'),
+    afterSeconds: field('几秒后提醒，整数秒数；例如十分钟为 600。与 dueAt 二选一', 'integer'),
+  }, ['text']),
+  tool('list_reminders', '查看提醒、发送状态及当前准确北京时间。需要确认当前日期和时间时也可调用。', {}),
+  tool('cancel_reminder', '根据完整编号取消尚未发送的提醒。取消前如不知道编号，先查看提醒列表。', { id: field('提醒完整编号') }, ['id']),
   tool('list_directory', '列出工作目录内的文件和文件夹。', { path: field('相对工作目录的路径，默认 .') }),
   tool('read_file', '读取工作目录内的文本文件。', { path: field('相对或绝对文件路径') }, ['path']),
   tool('write_file', '创建或覆盖工作目录内的文本文件。', { path: field('文件路径'), content: field('完整文件内容') }, ['path', 'content']),
@@ -29,7 +35,7 @@ export const definitions = [
 ];
 
 export class Tools {
-  constructor(store, skills, processes) { this.store = store; this.skills = skills; this.processes = processes; this.pending = new Map(); }
+  constructor(store, skills, processes, reminders) { this.store = store; this.skills = skills; this.processes = processes; this.pending = new Map(); this.reminders = reminders; }
   async resolvePath(input = '.', write = false) {
     if (typeof input !== 'string') throw new Error('路径必须是字符串');
     const root = await fs.realpath(this.store.config.workspace);
@@ -77,6 +83,15 @@ export class Tools {
     if (['run_command', 'write_file', 'install_skill'].includes(name)) await this.permission(name, args, context);
     context.signal.throwIfAborted();
     switch (name) {
+      case 'create_reminder':
+        if (!this.reminders) throw new Error('提醒服务尚未启动');
+        return this.reminders.create(args, { requestId: context.invocationId });
+      case 'list_reminders':
+        if (!this.reminders) throw new Error('提醒服务尚未启动');
+        return this.reminders.list();
+      case 'cancel_reminder':
+        if (!this.reminders) throw new Error('提醒服务尚未启动');
+        return this.reminders.cancel(args.id);
       case 'list_directory': {
         const entries = await fs.readdir(await this.resolvePath(args.path), { withFileTypes: true });
         return entries.slice(0, 500).map(e => ({ name: e.name, directory: e.isDirectory() }));

@@ -9,6 +9,7 @@ import { Skills } from './skills.js';
 import { Tools } from './tools.js';
 import { Agent } from './agent.js';
 import { Wechat } from './wechat.js';
+import { Reminders } from './reminders.js';
 
 export async function createApp({ store = new Store(), provider, wechatOptions,
   token = randomBytes(24).toString('hex'), assets: suppliedAssets, instanceId = randomBytes(16).toString('hex'), onShutdown } = {}) {
@@ -20,7 +21,8 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
     }
   });
   const skills = new Skills(store.dir, processes);
-  const tools = new Tools(store, skills, processes);
+  const reminders = new Reminders(store, { getWechat: () => wechat });
+  const tools = new Tools(store, skills, processes, reminders);
   provider ||= new Provider(() => store.config);
   const agent = new Agent(store, provider, tools);
   wechat = new Wechat(store, agent, wechatOptions);
@@ -68,7 +70,7 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
           .slice(-60).map(m => ({ role: m.role, text: m.content }));
         return json(res, 200, { config: store.publicConfig(), wechat: wechat.view(), busy: Boolean(agent.active),
           skills: await skills.list(), tasks: processes.list(), approvals: tools.approvals(), messages,
-          events: store.events.slice(-30), dataDir: store.dir });
+          events: store.events.slice(-30), reminders: reminders.list(), dataDir: store.dir });
       }
       if (req.method !== 'POST') return json(res, 405, { error: '不支持的请求' });
       if (!(req.headers['content-type'] || '').startsWith('application/json')) return json(res, 415, { error: '需要 JSON 请求' });
@@ -107,20 +109,22 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
           if (!wechat.loginState?.qrContent) throw new Error('请先生成二维码');
           return json(res, 200, { image: await QRCode.toDataURL(wechat.loginState.qrContent, { width: 280, margin: 2 }) });
         }
+        case '/api/reminders/cancel': return json(res, 200, reminders.cancel(input.id));
         case '/api/task/stop': return json(res, 200, processes.stop(input.id));
         default: return json(res, 404, { error: '接口不存在' });
       }
     } catch (e) { if (!res.headersSent) json(res, 400, { error: store.redact(e.message) }); else res.end(); }
   });
   server.requestTimeout = 150000;
-  return { server, store, provider, agent, tools, skills, processes, wechat, token,
+  return { server, store, provider, agent, tools, skills, processes, wechat, reminders, token,
     async listen(port = Number(process.env.PORT || 3210)) {
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
       if (wechat.account.token) wechat.start();
+      reminders.start();
       return `http://127.0.0.1:${server.address().port}/#${token}`;
     },
     async close() {
-      agent.stop(); wechat.stop(); wechat.loginController?.abort();
+      reminders.stop(); agent.stop(); wechat.stop(); wechat.loginController?.abort();
       server.closeAllConnections();
       await new Promise(resolve => server.close(resolve));
     },

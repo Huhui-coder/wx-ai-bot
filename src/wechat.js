@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { saveImage } from './images.js';
+import { reminderTime } from './reminders.js';
 
 const API = 'https://ilinkai.weixin.qq.com';
 const VERSION = '2.4.10';
@@ -27,7 +28,7 @@ export class Wechat {
   constructor(store, agent, { fetcher = fetch } = {}) {
     this.store = store; this.agent = agent; this.fetcher = fetcher;
     this.account = store.read('wechat', {});
-    this.state = { cursor: '', seen: [], inbox: [], outbox: [], ...store.read('wechat-state', {}) };
+    this.state = { cursor: '', seen: [], inbox: [], outbox: [], deliveredReminders: [], ...store.read('wechat-state', {}) };
     for (const job of this.state.inbox) if (job.status === 'running') job.status = job.images ? 'pending' : 'interrupted';
     this.status = this.account.token ? 'stopped' : 'unbound';
     this.lastError = ''; this.loginState = null; this.draining = false;
@@ -49,7 +50,7 @@ export class Wechat {
     const res = await this.fetcher(`${wechatURL(base)}/${endpoint}`, { method, headers,
       redirect: 'error', signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(timeout)]),
       ...(body !== undefined ? { body: JSON.stringify({ ...body,
-        ...(metadata ? { base_info: { channel_version: VERSION, bot_agent: 'WeixinLite/0.3.0' } } : {}) }) } : {}),
+        ...(metadata ? { base_info: { channel_version: VERSION, bot_agent: 'WeixinLite/0.4.0' } } : {}) }) } : {}),
     });
     if (!res.ok) throw new Error(`微信接口 HTTP ${res.status}`);
     const data = parseWechatJSON(await res.text());
@@ -161,7 +162,7 @@ export class Wechat {
       this.state.inbox.filter(j => !['pending', 'running'].includes(j.status)).slice(-30));
     this.save();
     // Control messages bypass the agent queue so a waiting tool can be approved/stopped.
-    if (!images.length && /^\/(approve|deny|stop|help|tasks|skills|new)(?:\s|$)/.test(text)) {
+    if (!images.length && /^\/(approve|deny|stop|help|tasks|skills|new|reminders|cancel)(?:\s|$)/.test(text)) {
       job.status = 'running'; this.save();
       let reply;
       try { reply = await this.control(text); job.status = 'done'; }
@@ -181,9 +182,14 @@ export class Wechat {
       if (this.agent.active) throw new Error('请先 /stop，再开始新会话');
       this.store.clear(); return '已开始新会话';
     }
+    if (name === '/reminders') {
+      const items = this.agent.tools.reminders.list().reminders.filter(r => ['scheduled', 'queued', 'blocked'].includes(r.status));
+      return items.map(r => `${r.id}\n${r.localTime} · ${r.text} · ${r.status === 'blocked' ? '绑定改变，未发送' : r.status === 'queued' ? '等待发送' : '待提醒'}`).join('\n\n') || '暂无未完成提醒（所有时间均为北京时间）';
+    }
+    if (name === '/cancel') { const item = this.agent.tools.reminders.cancel(id); return `已取消提醒：${item.text}\n编号：${item.id}`; }
     if (name === '/skills') return (await this.agent.tools.skills.list()).map(s => `${s.name}：${s.description}`).join('\n') || '尚未安装 Skill';
     if (name === '/tasks') return this.agent.tools.processes.list().map(t => `${t.id} ${t.status} ${t.command}`).join('\n') || '暂无任务';
-    return '直接聊天即可使用配置的模型。发图片会自动保存到本机，并回复保存位置。\n/skills 已安装技能\n/tasks 任务状态\n/stop 停止任务\n/new 新会话\n/approve 编号 允许操作\n/deny 编号 拒绝操作';
+    return '直接聊天即可使用配置的模型。发图片会自动保存到本机，并回复保存位置。\n/skills 已安装技能\n/tasks 任务状态\n/reminders 查看提醒（北京时间）\n/cancel 编号 取消提醒\n/stop 停止任务\n/new 新会话\n/approve 编号 允许操作\n/deny 编号 拒绝操作';
   }
   async drain() {
     if (this.draining || this.status === 'stopped' || this.status === 'unbound') return;
@@ -196,7 +202,7 @@ export class Wechat {
         if (this.agent.active) { await delay(500); continue; }
         job.status = 'running'; this.save();
         try {
-          const answer = await this.agent.run(job.text, { owner: 'wechat', notify: async event => {
+          const answer = await this.agent.run(job.text, { owner: 'wechat', requestId: job.id, notify: async event => {
             if (event.type === 'approval') await this.send(`需要允许一次操作：${event.name}\n${JSON.stringify(event.args).slice(0, 1100)}\n允许：/approve ${event.id}\n拒绝：/deny ${event.id}`);
           } });
           job.status = 'done'; this.save();
@@ -234,33 +240,67 @@ export class Wechat {
     delete job.images; // Expiring CDN tickets and decryption keys stay out of completed history.
     // Persist receipt and completion together, before attempting delivery.
     this.state.outbox.push({ id: randomUUID(), text: this.store.redact(reply) });
-    this.state.outbox = this.state.outbox.slice(-30); this.save();
+    this.trimOutbox(); this.save();
     this.imageController = null;
     await this.flush().catch(e => { this.lastError = this.store.redact(e.message); });
   }
   async send(text) {
     const item = { id: randomUUID(), text: this.store.redact(text).slice(0, 10000) };
-    this.state.outbox.push(item); this.state.outbox = this.state.outbox.slice(-30); this.save();
+    this.state.outbox.push(item); this.trimOutbox(); this.save();
     return this.flush();
   }
+  trimOutbox() {
+    // Keep every pending reminder; bound ordinary replies independently.
+    const ordinary = new Set(this.state.outbox.filter(item => !item.reminderId).slice(-30).map(item => item.id));
+    this.state.outbox = this.state.outbox.filter(item => item.reminderId || ordinary.has(item.id));
+  }
+  reminderDelivered(id) { return this.state.deliveredReminders?.find(item => item.id === id); }
+  queueReminder(item, now) {
+    if (this.reminderDelivered(item.id) || this.state.outbox.some(reply => reply.reminderId === item.id)) return;
+    const late = now - Date.parse(item.dueAt) >= 60000;
+    this.state.outbox.push({ id: 'reminder-' + item.id, reminderId: item.id,
+      userId: item.userId, botId: item.botId,
+      text: this.store.redact(`⏰ 提醒：${item.text}\n${late ? '补发，原定' : '时间'}：${reminderTime(item.dueAt)}`) });
+    this.save();
+  }
+  cancelReminder(id) {
+    if (this.sendingReminderId === id) throw new Error('这条提醒正在发送，无法取消，请稍后查看发送结果');
+    this.state.outbox = this.state.outbox.filter(item => item.reminderId !== id); this.save();
+  }
   async flush() {
-    if (this.sending) return;
+    if (this.flushPromise) return this.flushPromise;
+    this.flushPromise = this.flushOutbox();
+    try { return await this.flushPromise; } finally { this.flushPromise = null; }
+  }
+  async flushOutbox() {
     this.sending = true;
     try {
       while (this.state.outbox.length) {
         if (!this.state.context) throw new Error('请先在微信给 Bot 发一条消息');
         const item = this.state.outbox[0];
+        if (item.reminderId && (item.userId !== this.account.userId || item.botId !== this.account.botId)) {
+          this.state.outbox.shift(); this.save(); continue;
+        }
+        if (item.reminderId && ['stopped', 'unbound', 'expired'].includes(this.status)) throw new Error('微信连接已暂停或失效，提醒等待恢复后发送');
         item.offset ||= 0;
         const chunk = Array.from(item.text).slice(item.offset, item.offset + 1500).join('');
+        this.sendingReminderId = item.reminderId;
         await this.request('ilink/bot/sendmessage', { msg: {
           from_user_id: '', to_user_id: this.account.userId, client_id: `${item.id}-${item.offset}`,
           message_type: 2, message_state: 2, run_id: item.id, context_token: this.state.context,
           item_list: [{ type: 1, text_item: { text: chunk } }],
         } }, { timeout: 20000 });
         item.offset += Array.from(chunk).length;
-        if (item.offset >= Array.from(item.text).length) this.state.outbox.shift();
-        this.save();
+        if (item.offset >= Array.from(item.text).length) {
+          this.state.outbox = this.state.outbox.filter(reply => reply.id !== item.id);
+          if (item.reminderId) {
+            this.state.deliveredReminders ||= [];
+            this.state.deliveredReminders.push({ id: item.reminderId, at: new Date().toISOString() });
+            this.state.deliveredReminders = this.state.deliveredReminders.slice(-500);
+          }
+        }
+        this.save(); this.sendingReminderId = null;
       }
-    } finally { this.sending = false; }
+    } finally { this.sending = false; this.sendingReminderId = null; }
   }
 }

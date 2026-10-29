@@ -9,6 +9,7 @@
         <button class="nav active" data-page="chat">对话<span>01</span></button>
         <button class="nav" data-page="settings">连接设置<span>02</span></button>
         <button class="nav" data-page="skills">Skills<span>03</span></button>
+        <button class="nav" data-page="reminders">提醒<span>04</span></button>
       </nav>
       <div class="aside-foot"><span id="connection-dot" class="dot"></span><span id="aside-status">本机运行中</span><small>模型由你选择，任务在这台电脑执行。</small></div>
     </aside>
@@ -50,6 +51,12 @@
         <form id="skill-form" class="panel install-panel"><h2>安装 Skill</h2><div class="install-fields"><label>安装名称<input id="skill-name" required placeholder="my-skill" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}"></label><label>本地目录或 GitHub 仓库<input id="skill-source" required placeholder="https://github.com/owner/repo"></label><label>仓库内子目录（可选）<input id="skill-subdir" placeholder="skills/my-skill"></label></div><div class="actions"><button class="primary">安装 Skill</button><span class="subtle">也可以直接在微信中让助手安装。</span></div></form>
         <div class="task-heading"><h2>已安装</h2><span id="skill-count">0 项</span></div><div id="skill-list" class="skill-list"></div>
         <p class="fine">通用文件和命令类 Skill 可直接使用。依赖特定平台工具的 Skill，需要额外适配；所需软件由助手按说明检查。</p>
+      </section>
+      <section id="page-reminders" class="page" hidden>
+        <div class="page-heading"><div><p class="eyebrow">A NOTE FOR LATER</p><h1>到时间，在微信提醒你。</h1><p>所有时间统一使用北京时间（Asia/Shanghai · UTC+8）。</p></div></div>
+        <div class="panel"><h2>直接在微信或对话页告诉助手</h2><p class="subtle">“明天下午 3 点提醒我总结日报。”<br>“10 分钟后提醒我去开会。”<br>“查看我的提醒。”</p><p class="fine">创建后会确认具体日期、北京时间和编号。当前支持一次性提醒；电脑需运行、联网，关机或休眠后会在恢复时补发。暂停微信连接也会暂停发送。停止聊天不会取消提醒。</p></div>
+        <div class="task-heading"><h2>提醒列表</h2><span id="reminder-count">0 条待提醒</span></div>
+        <p id="reminder-clock" class="subtle"></p><div id="reminder-list" class="tasks"></div>
       </section>
       <footer>轻装运行 · 微信小助理 <span id="data-dir"></span></footer>
     </main>
