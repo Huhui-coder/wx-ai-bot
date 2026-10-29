@@ -1,0 +1,77 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-15
+            target: bun-darwin-arm64
+            binary: weixin-lite-darwin-arm64
+          - name: macOS Intel
+            os: macos-15-intel
+            target: bun-darwin-x64
+            binary: weixin-lite-darwin-x64
+          - name: Windows x64
+            os: windows-2025
+            target: bun-windows-x64-baseline
+            binary: weixin-lite-windows-x64-baseline.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.17'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: npm run build:binary -- ${{ matrix.target }}
+      - name: Test source and standalone lifecycle
+        run: npm test
+        env:
+          WEIXIN_LITE_TEST_BINARY: ./dist/${{ matrix.binary }}
+      - name: Test the actual Bun runtime
+        run: bun test test/core.test.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: dist/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish tested executables
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        run: cd dist && sha256sum weixin-lite-* > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "微信小助理 $GITHUB_REF_NAME" --generate-notes

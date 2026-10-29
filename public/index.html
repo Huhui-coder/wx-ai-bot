@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>微信小助理</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+  <div class="shell">
+    <aside>
+      <a class="brand" href="#"><span class="brand-icon">微</span><span>微信小助理<small>在微信里，让电脑帮你做事。</small></span></a>
+      <nav aria-label="主导航">
+        <button class="nav active" data-page="chat">对话<span>01</span></button>
+        <button class="nav" data-page="settings">连接设置<span>02</span></button>
+        <button class="nav" data-page="skills">Skills<span>03</span></button>
+      </nav>
+      <div class="aside-foot"><span id="connection-dot" class="dot"></span><span id="aside-status">本机运行中</span><small>模型由你选择，任务在这台电脑执行。</small></div>
+    </aside>
+    <main>
+      <header><span id="breadcrumb">工作台 / 对话</span><span class="local-badge"><i></i> 本机应用</span></header>
+      <section id="page-chat" class="page">
+        <div class="page-heading"><div><p class="eyebrow">YOUR LOCAL ASSISTANT</p><h1>聊一句，做点事。</h1><p>这里和微信使用同一个模型、同一段对话。</p></div><button id="new-chat" class="quiet">新对话 ↗</button></div>
+        <div id="setup-hint" class="hint" hidden>先在连接设置中填写模型 API Key，即可开始对话。微信可以稍后绑定。</div>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <div id="approvals" class="approvals"></div>
+        <form id="chat-form" class="composer"><textarea id="chat-input" rows="2" placeholder="例如：看看这个项目怎么运行，帮我执行测试。" aria-label="消息内容"></textarea><div class="composer-bottom"><span id="model-label">DeepSeek</span><div><button id="stop" type="button" class="quiet" hidden>停止处理</button><button id="send" class="primary">发送 ↑</button></div></div></form>
+        <div class="task-heading"><h2>本机任务</h2><span id="busy-label">准备就绪</span></div><div id="tasks" class="tasks"></div>
+      </section>
+      <section id="page-settings" class="page" hidden>
+        <div class="page-heading"><div><p class="eyebrow">CONNECT ONCE</p><h1>接上你的模型和微信。</h1><p>电脑上的程序负责执行，模型负责理解你的意图。</p></div></div>
+        <div class="settings-grid"><form id="settings-form" class="panel"><div class="panel-title"><span class="step">01</span><h2>模型与电脑</h2></div>
+          <label>模型服务<select id="provider"><option value="deepseek">DeepSeek</option><option value="custom">自定义兼容接口</option></select></label>
+          <label>API 地址<input id="baseUrl" type="url" required placeholder="https://api.deepseek.com"></label>
+          <label>模型名称<input id="model" required placeholder="deepseek-flash"></label>
+          <label>API Key <span id="key-state" class="subtle"></span><input id="apiKey" type="password" autocomplete="new-password" placeholder="在本机填写，留空保留已有 Key"></label>
+          <label>工作目录<input id="workspace" required placeholder="/Users/you/Projects"></label>
+          <label>助手偏好<textarea id="systemPrompt" rows="2"></textarea></label>
+          <label class="checkbox"><input id="allowMutations" type="checkbox"><span>允许自动执行命令、写文件和安装 Skill<small>关闭时，每次操作可在这里或微信中允许。命令使用你的本机权限执行。</small></span></label>
+          <div class="actions"><button class="primary">保存设置</button><button id="test-model" type="button" class="quiet">测试连接</button></div>
+          <p class="fine">Key 只保存在本机的私有配置文件中。对话和执行所需的内容会发送给你选择的模型服务。</p>
+        </form>
+        <div class="panel wechat-panel"><div class="panel-title"><span class="step">02</span><h2>微信 Bot</h2><span id="wechat-status" class="pill">未绑定</span></div>
+          <div class="qr-box" id="qr-box"><div class="qr-placeholder"><span>扫一扫</span><p>生成二维码后，用手机微信扫码确认。</p></div></div>
+          <div id="verify-box" hidden><label>微信上显示的验证码<input id="verify-code" inputmode="numeric"></label><button id="verify-button" class="quiet">提交验证码</button></div>
+          <p id="wechat-detail" class="subtle">绑定后，给 Bot 发消息即可调用当前模型。</p>
+          <div class="actions"><button id="wechat-login" class="primary">生成微信二维码</button><button id="wechat-toggle" class="quiet" hidden>暂停连接</button></div>
+          <button id="retry-replies" class="quiet" hidden>重试未送达的回复</button>
+          <div class="wechat-note"><h3>绑定之后，你可以这样说</h3><p>“帮我运行项目测试。”</p><p>“把这个 GitHub 仓库里的 Skill 装上。”</p><p>“用刚才安装的 Skill 处理这份文件。”</p></div>
+        </div></div>
+      </section>
+      <section id="page-skills" class="page" hidden>
+        <div class="page-heading"><div><p class="eyebrow">SMALL FILES, MORE POSSIBILITIES</p><h1>给助手添一项本领。</h1><p>安装 SKILL.md 和附带脚本，助手会在需要时读取并使用。</p></div></div>
+        <form id="skill-form" class="panel install-panel"><h2>安装 Skill</h2><div class="install-fields"><label>安装名称<input id="skill-name" required placeholder="my-skill" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}"></label><label>本地目录或 GitHub 仓库<input id="skill-source" required placeholder="https://github.com/owner/repo"></label><label>仓库内子目录（可选）<input id="skill-subdir" placeholder="skills/my-skill"></label></div><div class="actions"><button class="primary">安装 Skill</button><span class="subtle">也可以直接在微信中让助手安装。</span></div></form>
+        <div class="task-heading"><h2>已安装</h2><span id="skill-count">0 项</span></div><div id="skill-list" class="skill-list"></div>
+        <p class="fine">通用文件和命令类 Skill 可直接使用。依赖特定平台工具的 Skill，需要额外适配；所需软件由助手按说明检查。</p>
+      </section>
+      <footer>轻装运行 · 微信小助理 <span id="data-dir"></span></footer>
+    </main>
+  </div>
+  <div id="toast" role="status" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body></html>

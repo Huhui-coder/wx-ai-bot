@@ -1,0 +1,19 @@
+{
+  "name": "weixin-lite-assistant",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "微信 + 自选模型 API + 本机工具 + SKILL.md",
+  "engines": { "node": ">=22.13.0" },
+  "bin": { "weixin-lite": "bin/weixin-lite.js" },
+  "files": ["bin/", "src/", "public/", "README.md"],
+  "scripts": {
+    "start": "node bin/weixin-lite.js",
+    "stop": "node bin/weixin-lite.js stop",
+    "status": "node bin/weixin-lite.js status",
+    "build:binary": "node scripts/build-binary.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/server.js && node --check src/launcher.js && node --check public/app.js"
+  },
+  "dependencies": { "qrcode": "^1.5.4", "yaml": "^2.8.1" }
+}
