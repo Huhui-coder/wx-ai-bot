@@ -127,15 +127,19 @@ test('full agent loop installs a Skill, reads its script, executes it and sees t
       case 1: assert.match(messages.at(-1).content, /installed/); return assistant([call('read_skill', { name: 'demo' })]);
       case 2: assert.match(messages.at(-1).content, /demo.cjs/); return assistant([call('read_skill', { name: 'demo', file: 'demo.cjs' }, 'script')]);
       case 3: return assistant([call('run_command', { command: shellCommand(process.execPath, [path.join(tools.skills.dir, 'demo/demo.cjs')]), cwd: '.' })]);
-      default:
+      default: {
+        const result = JSON.parse(messages.at(-1).content);
+        if (result.status === 'running') return assistant([call('command_status', { id: result.id, waitSeconds: 10 }, 'poll-' + step)]);
+        assert.equal(result.status, 'done');
         assert.match(messages.at(-1).content, /skill-e2e-ok/);
         return { role: 'assistant', content: '技能已安装并执行，输出 skill-e2e-ok。' };
+      }
     }
   } };
   const agent = new Agent(store, provider, tools);
   assert.match(await agent.run('安装并运行 demo'), /skill-e2e-ok/);
-  assert.equal(step, 5); assert.equal(agent.active, null);
-  assert.equal(store.history.filter(m => m.role === 'tool').length, 4);
+  assert.ok(step >= 5); assert.equal(agent.active, null);
+  assert.ok(store.history.filter(m => m.role === 'tool').length >= 4);
 });
 
 test('malformed model arguments return a tool error without executing commands', async t => {
