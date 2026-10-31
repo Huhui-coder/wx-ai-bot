@@ -264,7 +264,8 @@ async function noticeApp(t, config = {}) {
   return { root, app, sent, model, say };
 }
 const callTool = (name, args) => ({ role: 'assistant', content: null, tool_calls: [{ id: 'c' + name, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
-const nodeCommand = code => `${process.platform === 'win32' ? '& ' : ''}"${process.execPath}" -e "${code}"`;
+// PowerShell otherwise maps every nonzero native exit status to 1.
+const nodeCommand = code => `${process.platform === 'win32' ? '& ' : ''}"${process.execPath}" -e "${code}"${process.platform === 'win32' ? '; exit $LASTEXITCODE' : ''}`;
 const scripted = (...steps) => async () => { const step = steps.shift(); return typeof step === 'function' ? step() : step ?? { role: 'assistant', content: '好了' }; };
 
 test('commands the model has read produce only its reply, whether they pass or fail', async t => {
