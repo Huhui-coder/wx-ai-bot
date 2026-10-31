@@ -351,9 +351,14 @@ export class Wechat {
     this.save();
   }
   async flush() {
-    if (this.flushPromise) return this.flushPromise;
-    this.flushPromise = this.flushOutbox();
-    try { return await this.flushPromise; } finally { this.flushPromise = null; }
+    if (!this.flushPromise) {
+      // Clear the shared promise before its waiters resume. A new reply can arrive
+      // after the loop emptied the queue but before that promise settles (Bun).
+      this.flushPromise = Promise.resolve().then(() => this.flushOutbox())
+        .finally(() => { this.flushPromise = null; });
+    }
+    await this.flushPromise;
+    if (this.state.outbox.length) return this.flush();
   }
   async flushOutbox() {
     this.sending = true;
