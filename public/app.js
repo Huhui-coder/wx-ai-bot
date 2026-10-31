@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 const auth = location.hash.slice(1) || sessionStorage.getItem('weixin-lite-token') || '';
 if (location.hash) { sessionStorage.setItem('weixin-lite-token', auth); history.replaceState(null, '', location.pathname); }
-let state, loaded = false, qrValue = '', messagesKey = '', remindersKey = '', toastTimer;
+let state, loaded = false, disconnected = false, qrValue = '', messagesKey = '', remindersKey = '', toastTimer;
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
 async function api(route, data) {
   const response = await fetch('/api/' + route, { method: data === undefined ? 'GET' : 'POST',
@@ -36,17 +36,20 @@ function renderReminders(data) {
   $('reminder-clock').textContent = '当前时间：' + data.currentTime;
   const key = JSON.stringify(data.reminders); if (key === remindersKey) return; remindersKey = key;
   const names = { scheduled: '待提醒', queued: '待发送', sent: '已发送', cancelled: '已取消', blocked: '绑定已改变' };
+  const taskNames = { scheduled: '待执行', queued: '开始执行', sent: '已开始执行' };
   const pending = data.reminders.filter(r => ['scheduled', 'queued'].includes(r.status)).length;
   $('reminder-count').textContent = pending + ' 条待提醒';
   $('reminder-list').replaceChildren(...(data.reminders.length ? data.reminders.map(r => {
     const card = el('div', 'task'), top = el('div', 'task-top');
-    top.append(el('strong', '', r.text), el('span', 'task-status', names[r.status] || r.status)); card.append(top);
+    const task = r.kind === 'task';
+    top.append(el('strong', '', r.text), el('span', 'task-status', (task && taskNames[r.status]) || names[r.status] || r.status)); card.append(top);
+    if (task) card.append(el('p', 'subtle', `定时任务 · 可自动执行：${r.grants.commands.join('、') || '无'}${r.grants.writes ? ' · 可写文件' : ''}${r.quiet ? ' · 无事不通知' : ''}`));
     if (r.repeat) card.append(el('p', 'subtle', r.repeatLabel));
     const nextLabel = r.repeat ? (['scheduled', 'queued'].includes(r.status) ? '下一次：' : '原计划：') : '';
     card.append(el('p', 'subtle', nextLabel + r.localTime), el('p', 'subtle', '编号：' + r.id));
-    if (r.lastSentAt) card.append(el('p', 'subtle', `已发送 ${r.deliveryCount} 次`));
+    if (r.lastSentAt) card.append(el('p', 'subtle', `已${task ? '执行' : '发送'} ${r.deliveryCount} 次`));
     if (r.lastError) card.append(el('p', 'subtle', r.lastError));
-    if (['scheduled', 'queued', 'blocked'].includes(r.status)) card.append(button(r.repeat ? '取消整组重复提醒' : '取消提醒', async () => { await api('reminders/cancel', { id: r.id }); toast('提醒已取消'); await refresh(); }));
+    if (['scheduled', 'queued', 'blocked'].includes(r.status)) card.append(button(r.repeat ? `取消整组重复${task ? '任务' : '提醒'}` : `取消${task ? '任务' : '提醒'}`, async () => { await api('reminders/cancel', { id: r.id }); toast('已取消'); await refresh(); }));
     return card;
   }) : [el('div', 'empty', '还没有提醒。可以在微信里说：“10 分钟后提醒我总结日报。”')]));
 }
@@ -55,10 +58,14 @@ async function refresh() {
     state = await api('state');
     if (!loaded) {
       for (const name of ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory']) $(name).value = state.config[name];
-      $('allowMutations').checked = state.config.allowMutations;
+      for (const name of ['allowMutations', 'vision', 'keepAwake']) $(name).checked = state.config[name];
+      $('allowedCommands').value = state.config.allowedCommands.join('\n');
+      $('maxCommandMinutes').value = state.config.maxCommandMinutes;
       $('provider').value = state.config.baseUrl.includes('api.deepseek.com') ? 'deepseek' : 'custom';
       loaded = true;
     }
+    disconnected = false;
+    $('autostart-row').hidden = !state.autostart.supported; $('autostart').checked = state.autostart.enabled;
     $('setup-hint').hidden = state.config.hasApiKey;
     $('key-state').textContent = state.config.hasApiKey ? '· 已保存' : '';
     $('model-label').textContent = state.config.model;
@@ -82,8 +89,10 @@ async function refresh() {
     renderMessages(state.messages);
     renderReminders(state.reminders);
     $('approvals').replaceChildren(...state.approvals.map(a => {
-      const card = el('div', 'approval'); card.append(el('h3', '', '允许这次操作？ · ' + a.name), el('pre', '', JSON.stringify(a.args, null, 2)));
-      card.append(button('允许一次', async () => { await api('approve', { id: a.id, approved: true }); await refresh(); }, 'primary'), button('拒绝', async () => { await api('approve', { id: a.id, approved: false }); await refresh(); })); return card;
+      const card = el('div', 'approval'); card.append(el('h3', '', '允许这次操作？ · ' + a.name), el('pre', '', a.summary));
+      card.append(button('允许一次', async () => { await api('approve', { id: a.id, approved: true }); await refresh(); }, 'primary'));
+      if (a.scope) card.append(button('本次对话都允许：' + a.scope, async () => { await api('approve', { id: a.id, approved: true, always: true }); await refresh(); }));
+      card.append(button('拒绝', async () => { await api('approve', { id: a.id, approved: false }); await refresh(); })); return card;
     }));
     $('tasks').replaceChildren(...(state.tasks.length ? state.tasks.slice(0, 8).map(t => {
       const card = el('div', 'task'), top = el('div', 'task-top'); top.append(el('span', 'task-command', t.command), el('span', 'task-status', `${t.id} · ${taskNames[t.status] || t.status}`));
@@ -93,15 +102,21 @@ async function refresh() {
     $('skill-count').textContent = state.skills.length + ' 项';
     $('skill-list').replaceChildren(...(state.skills.length ? state.skills.map(s => { const card = el('div', 'skill-card'); card.append(el('h3', '', s.name), el('p', '', s.description || '已安装，可让助手读取此 Skill 的说明。')); return card; }) : [el('div', 'empty', '还没有安装 Skill。可以导入本地目录，也可以从 GitHub 安装。')]));
     $('data-dir').textContent = state.dataDir;
-  } catch (e) { if (!loaded) toast(e.message); }
+  } catch (e) {
+    if (!loaded) toast(e.message);
+    else if (!disconnected) { disconnected = true; $('aside-status').textContent = '与本机服务的连接已断开，正在重试…'; $('connection-dot').classList.remove('connected'); }
+  }
 }
 $('settings-form').onsubmit = async event => {
   event.preventDefault(); const data = {};
   for (const name of ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory']) data[name] = $(name).value;
   if ($('apiKey').value.trim()) data.apiKey = $('apiKey').value.trim();
-  data.allowMutations = $('allowMutations').checked;
-  try { const saved = await api('config', data); $('imageDirectory').value = saved.imageDirectory; $('apiKey').value = ''; toast('设置已保存'); await refresh(); } catch (e) { toast(e.message); }
+  for (const name of ['allowMutations', 'vision', 'keepAwake']) data[name] = $(name).checked;
+  data.allowedCommands = $('allowedCommands').value.split('\n');
+  data.maxCommandMinutes = Number($('maxCommandMinutes').value);
+  try { const saved = await api('config', data); $('imageDirectory').value = saved.imageDirectory; $('apiKey').value = ''; toast('设置已保存'); await refresh(); if (state.keepAwake.error) toast(state.keepAwake.error); } catch (e) { toast(e.message); }
 };
+$('autostart').onchange = async () => { try { const result = await api('autostart', { enabled: $('autostart').checked }); toast(result.warning || (result.enabled ? '已开启自动启动' : '已关闭自动启动')); await refresh(); } catch (e) { toast(e.message); await refresh(); } };
 $('provider').onchange = () => { if ($('provider').value === 'deepseek') { $('baseUrl').value = 'https://api.deepseek.com'; $('model').value = 'deepseek-flash'; } };
 $('test-model').onclick = async () => { $('test-model').disabled = true; try { toast('正在测试已保存的模型配置…'); const r = await api('model/test', {}); toast(r.text); } catch (e) { toast(e.message); } finally { $('test-model').disabled = false; } };
 $('chat-form').onsubmit = async event => {

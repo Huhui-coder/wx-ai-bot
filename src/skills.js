@@ -3,6 +3,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { parse } from 'yaml';
 
+const LIST_CACHE_MS = 5000;
+
 export function within(root, candidate) {
   const relative = path.relative(root, candidate);
   return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
@@ -12,8 +14,15 @@ export function skillName(name) {
   return name;
 }
 export class Skills {
-  constructor(dir, processes) { this.dir = path.join(dir, 'skills'); this.processes = processes; }
+  constructor(dir, processes) { this.dir = path.join(dir, 'skills'); this.processes = processes; this.cache = null; }
+  // The web page polls every 1.5 seconds; do not re-parse every SKILL.md each time.
   async list() {
+    if (this.cache && Date.now() - this.cache.at < LIST_CACHE_MS) return this.cache.skills;
+    const skills = await this.scan();
+    this.cache = { at: Date.now(), skills };
+    return skills;
+  }
+  async scan() {
     await fs.mkdir(this.dir, { recursive: true, mode: 0o700 });
     const entries = await fs.readdir(this.dir, { withFileTypes: true });
     const result = [];
@@ -88,6 +97,7 @@ export class Skills {
           filter: p => !['.git', 'node_modules'].includes(path.basename(p)) });
         signal?.throwIfAborted();
         await fs.rename(staging, target);
+        this.cache = null;
       } catch (e) { await fs.rm(staging, { recursive: true, force: true }); throw e; }
       return { name, path: target, installed: true, note: '已安装说明和脚本；额外的软件依赖需按 Skill 说明另行安装。' };
     } finally { await fs.rm(temp, { recursive: true, force: true }); }

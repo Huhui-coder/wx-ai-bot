@@ -142,7 +142,13 @@ export async function persistMedia(bytes, { directory, privateDir, filename, day
       await fs.writeFile(temp, bytes, { mode: 0o600, flag: 'wx' });
       signal?.throwIfAborted();
       try { await fs.link(temp, target); }
-      catch (e) { if (e.code !== 'EEXIST' || !await existing()) throw e; }
+      catch (e) {
+        // exFAT and many network drives have no hard links; an exclusive copy keeps "never overwrite".
+        if (['ENOTSUP', 'EPERM', 'ENOSYS', 'EXDEV'].includes(e.code)) {
+          try { await fs.copyFile(temp, target, syncFS.constants.COPYFILE_EXCL); }
+          catch (copyError) { if (copyError.code !== 'EEXIST' || !await existing()) throw copyError; }
+        } else if (e.code !== 'EEXIST' || !await existing()) throw e;
+      }
     }
     return { path: target, bytes: bytes.length };
   } catch (error) {

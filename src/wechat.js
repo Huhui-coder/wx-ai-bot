@@ -3,9 +3,19 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { saveImage, mediaDay } from './images.js';
 import { saveAttachment } from './attachments.js';
 import { reminderTime, reminderDeliveryId } from './reminders.js';
+import { uploadMedia } from './outbound.js';
+import { VERSION as APP_VERSION } from './version.js';
 
 const API = 'https://ilinkai.weixin.qq.com';
 const VERSION = '2.4.10';
+const QUIET_REPLY = /^\s*\[无需通知\]/;
+const RECEIVED = '收到指令，正在处理。';
+const ACTION_LABELS = { run_command: '执行命令', write_file: '写入文件', install_skill: '安装 Skill', capture_screen: '截屏', schedule_task: '创建定时任务' };
+const OUTBOX_RETRY_MS = 30000;
+const APPROVAL_WORDS = [[/^(同意|允许|批准|确认|可以|好的?|行|ok|yes|y)[。.!！]*$/i, '/approve'],
+  [/^(拒绝|不同意|不允许|不行|不可以|no|n)[。.!！]*$/i, '/deny'],
+  [/^(始终|始终允许|一直允许|总是允许|always)[。.!！]*$/i, '/always']];
+const elapsed = from => { const minutes = Math.floor((Date.now() - Date.parse(from)) / 60000); return minutes ? minutes + ' 分钟' : '不足 1 分钟'; };
 export function wechatURL(value) {
   const url = new URL(value.startsWith('https://') ? value : 'https://' + value);
   if (url.protocol !== 'https:' || !url.hostname.endsWith('.weixin.qq.com') || url.port || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('微信服务返回了不受支持的接口地址');
@@ -29,13 +39,24 @@ export class Wechat {
   constructor(store, agent, { fetcher = fetch } = {}) {
     this.store = store; this.agent = agent; this.fetcher = fetcher;
     this.account = store.read('wechat', {});
-    this.state = { cursor: '', seen: [], inbox: [], outbox: [], deliveredReminders: [], ...store.read('wechat-state', {}) };
+    this.state = { cursor: '', seen: [], inbox: [], outbox: [], deliveredReminders: [], received: [], ...store.read('wechat-state', {}) };
+    const interrupted = [];
     for (const job of this.state.inbox) {
       if (job.images) { job.media = job.images.map(item => ({ type: 'image', item })); job.savedMedia = job.savedImages || []; delete job.images; delete job.savedImages; }
-      if (job.status === 'running') job.status = job.media ? 'pending' : 'interrupted';
+      if (job.status === 'running') { job.status = job.media ? 'pending' : 'interrupted'; if (!job.media) interrupted.push(job); }
+    }
+    // Never replay interrupted work, but do not leave the sender waiting in silence.
+    if (interrupted.length) {
+      this.state.outbox.push({ id: randomUUID(), text: `程序重启，以下任务被中断且不会自动重跑，请检查实际状态后重新发送：\n${interrupted.map(job => '· ' + job.text.slice(0, 80)).join('\n')}` });
+      this.save();
     }
     this.status = this.account.token ? 'stopped' : 'unbound';
-    this.lastError = ''; this.loginState = null; this.draining = false;
+    this.lastError = ''; this.loginState = null; this.draining = false; this.outboxRetryAt = 0;
+  }
+  background(promise) { promise.catch(e => { this.lastError = this.store.redact(e.message); }); }
+  message(items, clientId, runId) {
+    return { msg: { from_user_id: '', to_user_id: this.account.userId, client_id: clientId, message_type: 2, message_state: 2,
+      run_id: runId, context_token: this.state.context, item_list: items } };
   }
   save() { this.store.write('wechat-state', this.state); }
   view() {
@@ -54,13 +75,13 @@ export class Wechat {
     const res = await this.fetcher(`${wechatURL(base)}/${endpoint}`, { method, headers,
       redirect: 'error', signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(timeout)]),
       ...(body !== undefined ? { body: JSON.stringify({ ...body,
-        ...(metadata ? { base_info: { channel_version: VERSION, bot_agent: 'WeixinLite/0.5.1' } } : {}) }) } : {}),
+        ...(metadata ? { base_info: { channel_version: VERSION, bot_agent: 'WeixinLite/' + APP_VERSION } } : {}) }) } : {}),
     });
     if (!res.ok) throw new Error(`微信接口 HTTP ${res.status}`);
     const data = parseWechatJSON(await res.text());
     if (data.ret || data.errcode) {
       const code = data.errcode || data.ret;
-      const error = new Error(`微信接口错误 ${code}`); error.code = code; throw error;
+      const error = new Error(`微信接口错误 ${code}`); error.code = code; error.rejected = true; throw error;
     }
     return data;
   }
@@ -102,7 +123,7 @@ export class Wechat {
           this.stop();
           this.account = { token: data.bot_token, userId: data.ilink_user_id, botId: data.ilink_bot_id,
             baseUrl: wechatURL(data.baseurl || API) };
-          this.state = { cursor: '', seen: [], inbox: [], outbox: [] }; this.save();
+          this.state = { cursor: '', seen: [], inbox: [], outbox: [], received: [] }; this.save();
           this.store.write('wechat', this.account);
           this.start(); return;
         }
@@ -120,7 +141,7 @@ export class Wechat {
     if (!this.account.token) throw new Error('请先扫码绑定微信');
     this.pollController?.abort(); const controller = new AbortController(); this.pollController = controller;
     this.status = 'connected'; this.lastError = '';
-    void this.poll(controller.signal); void this.drain();
+    this.background(this.poll(controller.signal)); this.background(this.drain());
   }
   stop() { if (this.mediaController) { this.mediaController.resumeAfterStop = true; this.mediaController.abort(); } this.pollController?.abort(); this.status = this.account.token ? 'stopped' : 'unbound'; }
   async poll(signal) {
@@ -132,7 +153,9 @@ export class Wechat {
         for (const msg of data.msgs || []) await this.ingest(msg);
         if (data.get_updates_buf) this.state.cursor = data.get_updates_buf;
         this.save(); this.status = 'connected'; this.lastError = ''; failures = 0;
-        void this.drain();
+        this.background(this.drain());
+        // A reply that failed earlier must not wait for the next outgoing message.
+        if (this.state.outbox.length && Date.now() >= this.outboxRetryAt) { this.outboxRetryAt = Date.now() + OUTBOX_RETRY_MS; this.background(this.flush()); }
         // Prevent a tight loop if a server responds immediately with no messages.
         await delay(250, undefined, { signal });
       } catch (e) {
@@ -144,6 +167,15 @@ export class Wechat {
       }
     }
   }
+  trimInbox() {
+    const open = j => ['pending', 'running'].includes(j.status);
+    this.state.inbox = this.state.inbox.filter(open).concat(this.state.inbox.filter(j => !open(j)).slice(-30));
+  }
+  approvalShortcut(text) {
+    const pending = this.agent.tools?.approvals?.() || [];
+    const match = pending.length === 1 && APPROVAL_WORDS.find(([pattern]) => pattern.test(text));
+    return match ? `${match[1]} ${pending[0].id}` : text;
+  }
   async ingest(msg) {
     // Ownership applies before commands, context updates, history and model calls.
     if (msg.from_user_id !== this.account.userId || msg.message_type === 2) return;
@@ -151,7 +183,7 @@ export class Wechat {
     if (!id) { this.lastError = '收到缺少消息 ID 的消息，未执行'; return; }
     if (this.state.seen.includes(id)) return;
     if (msg.context_token) this.state.context = msg.context_token;
-    const text = inboundText(msg);
+    const text = this.approvalShortcut(inboundText(msg));
     const media = (msg.item_list || []).flatMap(item => item.type === 2 ? [{ type: 'image', item: item.image_item || {} }] : item.type === 4 ? [{ type: 'file', item: item.file_item || {} }] : []);
     this.state.seen.push(id); this.state.seen = this.state.seen.slice(-2000);
     if ((!text && !media.length) || text.length > 16000) { this.save(); return; }
@@ -161,22 +193,26 @@ export class Wechat {
     if (media.length > 9) { this.save(); await this.send('一条消息最多保存 9 个图片或附件，请分批发送。').catch(() => {}); return; }
     const job = { id, text, status: 'pending', ...(media.length ? { media, savedMedia: [],
       directory: this.store.config.imageDirectory, day: mediaDay() } : {}) };
-    this.state.inbox.push(job);
-    this.state.inbox = this.state.inbox.filter(j => ['pending', 'running'].includes(j.status)).concat(
-      this.state.inbox.filter(j => !['pending', 'running'].includes(j.status)).slice(-30));
+    this.state.inbox.push(job); this.trimInbox();
     this.save();
     // Control messages bypass the agent queue so a waiting tool can be approved/stopped.
-    if (!media.length && /^\/(approve|deny|stop|help|tasks|skills|new|reminders|cancel)(?:\s|$)/.test(text)) {
+    if (!media.length && /^\/(approve|deny|always|stop|help|tasks|skills|new|reminders|cancel)(?:\s|$)/.test(text)) {
       job.status = 'running'; this.save();
       let reply;
       try { reply = await this.control(text); job.status = 'done'; }
       catch (e) { reply = this.store.redact(e.message); job.status = 'failed'; }
       this.save(); await this.send(reply).catch(e => { this.lastError = e.message; });
-    }
+    // In the background: the poll loop must not wait on the send, and the outbox keeps it first.
+    } else if (text) this.background(this.send(RECEIVED));
   }
   async control(text) {
     const [name, id] = text.trim().split(/\s+/);
-    if (name === '/approve' || name === '/deny') { this.agent.tools.decide(id, name === '/approve'); return name === '/approve' ? '已允许本次操作' : '已拒绝本次操作'; }
+    if (['/approve', '/deny', '/always'].includes(name)) {
+      const pending = this.agent.tools?.approvals?.() || [];
+      const target = id || (pending.length === 1 ? pending[0].id : undefined);
+      this.agent.tools.decide(target, name !== '/deny', name === '/always');
+      return { '/approve': '已允许本次操作', '/deny': '已拒绝本次操作', '/always': '已允许，本次对话内不再询问同类操作' }[name];
+    }
     if (name === '/stop') {
       for (const job of this.state.inbox) if (job.status === 'pending') job.status = 'cancelled';
       this.mediaController?.abort();
@@ -184,16 +220,16 @@ export class Wechat {
     }
     if (name === '/new') {
       if (this.agent.active) throw new Error('请先 /stop，再开始新会话');
-      this.store.clear(); return '已开始新会话';
+      this.agent.reset(); return '已开始新会话';
     }
     if (name === '/reminders') {
       const items = this.agent.tools.reminders.list().reminders.filter(r => ['scheduled', 'queued', 'blocked'].includes(r.status));
-      return items.map(r => `${r.id}\n${r.repeat ? r.repeatLabel + '\n下一次：' : ''}${r.localTime} · ${r.text} · ${r.status === 'blocked' ? '绑定改变，未发送' : r.status === 'queued' ? '等待发送' : '待提醒'}`).join('\n\n') || '暂无未完成提醒（所有时间均为北京时间）';
+      return items.map(r => `${r.id}\n${r.kind === 'task' ? '定时任务 · ' : ''}${r.repeat ? r.repeatLabel + '\n下一次：' : ''}${r.localTime} · ${r.text} · ${r.status === 'blocked' ? '绑定改变，未发送' : r.status === 'queued' ? '等待发送' : '待提醒'}`).join('\n\n') || '暂无未完成提醒（所有时间均为北京时间）';
     }
     if (name === '/cancel') { const item = this.agent.tools.reminders.cancel(id); return `已取消${item.repeat ? '整组重复' : ''}提醒：${item.text}\n编号：${item.id}`; }
     if (name === '/skills') return (await this.agent.tools.skills.list()).map(s => `${s.name}：${s.description}`).join('\n') || '尚未安装 Skill';
-    if (name === '/tasks') return this.agent.tools.processes.list().map(t => `${t.id} ${t.status} ${t.command}`).join('\n') || '暂无任务';
-    return '直接聊天即可使用配置的模型。发图片或文件会自动保存到本机，并回复保存位置。\n/skills 已安装技能\n/tasks 任务状态\n/reminders 查看提醒（北京时间）\n/cancel 编号 取消提醒\n/stop 停止任务\n/new 新会话\n/approve 编号 允许操作\n/deny 编号 拒绝操作';
+    if (name === '/tasks') return this.agent.tools.processes.list().map(t => `${t.id} ${t.status} ${elapsed(t.startedAt)} ${t.command}${t.status === 'running' && t.output.trim() ? '\n最新输出：' + t.output.trim().slice(-200) : ''}`).join('\n') || '暂无任务';
+    return '直接聊天即可使用配置的模型。发图片或文件会自动保存到本机，并回复保存位置。\n/skills 已安装技能\n/tasks 任务状态\n/reminders 查看提醒和定时任务（北京时间）\n/cancel 编号 取消提醒或定时任务\n/stop 停止任务\n/new 新会话\n需要授权时回复：同意、拒绝，或“始终”（本次对话内不再询问同类操作）';
   }
   async drain() {
     if (this.draining || this.status === 'stopped' || this.status === 'unbound') return;
@@ -206,17 +242,50 @@ export class Wechat {
         if (this.agent.active) { await delay(500); continue; }
         job.status = 'running'; this.save();
         try {
-          const answer = await this.agent.run(job.text, { owner: 'wechat', requestId: job.id, notify: async event => {
-            if (event.type === 'approval') await this.send(`需要允许一次操作：${event.name}\n${JSON.stringify(event.args).slice(0, 1100)}\n允许：/approve ${event.id}\n拒绝：/deny ${event.id}`);
-          } });
+          const answer = await this.agent.run(job.task ? this.taskPrompt(job) : job.text, { owner: 'wechat', requestId: job.id,
+            unattended: Boolean(job.task), grants: job.task?.grants, notify: async event => {
+              if (event.type === 'approval') await this.send(`需要授权：${ACTION_LABELS[event.name] || event.name}\n${event.summary}\n\n回复“同意”允许一次${event.scope ? `，“始终”本次对话内允许${event.scope === '工作目录内的写入' ? event.scope : `以 ${event.scope} 开头的命令`}` : ''}，“拒绝”取消。\n编号 ${event.id}`);
+            } });
           job.status = 'done'; this.save();
-          await this.send(answer);
+          if (!job.task?.quiet || !QUIET_REPLY.test(answer)) await this.send(job.task ? '⏰ 定时任务结果：\n' + answer : answer);
         } catch (e) {
-          if (job.status === 'running') { job.status = 'failed'; this.save(); await this.send('处理未完成：' + e.message).catch(() => {}); }
+          if (job.status === 'running') { job.status = 'failed'; this.save(); await this.send((job.task ? '⏰ 定时任务失败：' : '处理未完成：') + e.message).catch(() => {}); }
           this.lastError = this.store.redact(e.message);
         }
       }
     } finally { this.draining = false; }
+  }
+  taskPrompt(job) {
+    return `[定时任务${job.task.late ? '，因电脑离线而补跑' : ''}，无人值守，用户此刻无法审批，未获授权的操作会被拒绝]\n${job.text}${job.task.quiet ? '\n如果没有需要告诉用户的事，只回复 [无需通知]。' : ''}`;
+  }
+  queueTask(item, now) {
+    const occurrenceId = reminderDeliveryId(item);
+    if (this.reminderDelivered(occurrenceId)) return;
+    // The job and its receipt commit together, so a restart can neither lose nor repeat it.
+    this.state.inbox.push({ id: 'task-' + occurrenceId, text: item.text, status: 'pending',
+      task: { reminderId: item.id, quiet: item.quiet, grants: item.grants, late: now - Date.parse(item.dueAt) >= 60000 } });
+    this.recordDelivery(occurrenceId); this.trimInbox(); this.save();
+    this.background(this.drain());
+  }
+  recordDelivery(id) {
+    this.state.deliveredReminders ||= [];
+    this.state.deliveredReminders.push({ id, at: new Date().toISOString() });
+    this.state.deliveredReminders = this.state.deliveredReminders.slice(-500);
+  }
+  async sendFile(file, { signal } = {}) {
+    if (!this.account.token) throw new Error('请先扫码绑定微信');
+    if (!this.state.context) throw new Error('请先在微信给 Bot 发一条消息');
+    if (['stopped', 'expired'].includes(this.status)) throw new Error('微信连接已暂停或失效，文件未发送');
+    const media = await uploadMedia(file, { request: (endpoint, body, options) => this.request(endpoint, body, options),
+      fetcher: this.fetcher, toUserId: this.account.userId, signal });
+    // The fixed client_id lets the platform drop a duplicate after a timed-out attempt.
+    const id = randomUUID();
+    for (let attempt = 0; ; attempt++) {
+      try { await this.request('ilink/bot/sendmessage', this.message([media.item], id, id), { timeout: 20000, signal }); break; }
+      catch (e) { if (e.rejected || signal?.aborted || attempt >= 2) throw e; await delay(1000, undefined, { signal }); }
+    }
+    this.store.event('file_sent', { name: media.name, bytes: media.bytes });
+    return { sent: true, name: media.name, kind: media.kind, bytes: media.bytes };
   }
   async receiveMedia(job) {
     const controller = new AbortController(); this.mediaController = controller;
@@ -247,6 +316,8 @@ export class Wechat {
       errors.length ? `${noun}保存失败：\n` + errors.join('\n') : ''].filter(Boolean).join('\n\n');
     job.status = errors.length ? 'failed' : 'done';
     delete job.media; // Expiring CDN tickets and decryption keys stay out of completed history.
+    this.state.received = [...this.state.received, ...paths.map(file => ({ path: file, at: new Date().toISOString() }))].slice(-20);
+    if (job.text && paths.length) this.state.inbox.push({ id: job.id + '-ask', status: 'pending', text: `${job.text}\n\n这条消息附带的文件已保存：\n${paths.join('\n')}` });
     // Persist receipt and completion together, before attempting delivery.
     this.state.outbox.push({ id: randomUUID(), text: this.store.redact(reply) });
     this.trimOutbox(); this.save();
@@ -275,7 +346,9 @@ export class Wechat {
   }
   cancelReminder(id) {
     if (this.sendingReminderId === id) throw new Error('这条提醒正在发送，无法取消，请稍后查看发送结果');
-    this.state.outbox = this.state.outbox.filter(item => item.reminderId !== id); this.save();
+    this.state.outbox = this.state.outbox.filter(item => item.reminderId !== id);
+    for (const job of this.state.inbox) if (job.task?.reminderId === id && job.status === 'pending') job.status = 'cancelled';
+    this.save();
   }
   async flush() {
     if (this.flushPromise) return this.flushPromise;
@@ -295,19 +368,11 @@ export class Wechat {
         item.offset ||= 0;
         const chunk = Array.from(item.text).slice(item.offset, item.offset + 1500).join('');
         this.sendingReminderId = item.reminderId;
-        await this.request('ilink/bot/sendmessage', { msg: {
-          from_user_id: '', to_user_id: this.account.userId, client_id: `${item.id}-${item.offset}`,
-          message_type: 2, message_state: 2, run_id: item.id, context_token: this.state.context,
-          item_list: [{ type: 1, text_item: { text: chunk } }],
-        } }, { timeout: 20000 });
+        await this.request('ilink/bot/sendmessage', this.message([{ type: 1, text_item: { text: chunk } }], `${item.id}-${item.offset}`, item.id), { timeout: 20000 });
         item.offset += Array.from(chunk).length;
         if (item.offset >= Array.from(item.text).length) {
           this.state.outbox = this.state.outbox.filter(reply => reply.id !== item.id);
-          if (item.reminderId) {
-            this.state.deliveredReminders ||= [];
-            this.state.deliveredReminders.push({ id: item.occurrenceId || item.reminderId, at: new Date().toISOString() });
-            this.state.deliveredReminders = this.state.deliveredReminders.slice(-500);
-          }
+          if (item.reminderId) this.recordDelivery(item.occurrenceId || item.reminderId);
         }
         this.save(); this.sendingReminderId = null;
       }

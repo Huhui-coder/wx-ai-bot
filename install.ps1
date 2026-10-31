@@ -18,7 +18,16 @@ try {
   if ((Get-FileHash $download -Algorithm SHA256).Hash -ne $match.Groups[1].Value) { throw '下载校验失败，请重试。' }
   New-Item -ItemType Directory -Path $dest -Force | Out-Null
   $exe = Join-Path $dest 'weixin-lite.exe'
-  if (Test-Path $exe) { & $exe stop; if ($LASTEXITCODE -ne 0) { throw '旧服务未能停止，未替换程序。' } }
+  if (Test-Path $exe) {
+    # Older versions can report a transient error while the service is already stopping.
+    $stopped = $false
+    foreach ($attempt in 1..3) {
+      & $exe stop
+      if ($LASTEXITCODE -eq 0) { $stopped = $true; break }
+      Start-Sleep -Seconds 1
+    }
+    if (-not $stopped) { throw '旧服务未能停止，未替换程序。' }
+  }
   Copy-Item $download $exe -Force
   Write-Host "已安装。以后运行：& `"$exe`""
   & $exe

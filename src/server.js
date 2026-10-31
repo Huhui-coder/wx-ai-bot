@@ -10,21 +10,33 @@ import { Tools } from './tools.js';
 import { Agent } from './agent.js';
 import { Wechat } from './wechat.js';
 import { Reminders } from './reminders.js';
+import { Autostart, KeepAwake } from './system.js';
+
+const outputTail = (task, size, label = '\n\n') => task.output.trim() ? label + task.output.trim().slice(-size) : '';
+const finishedNotice = task => `${{ done: '后台任务完成', failed: `后台任务失败（退出码 ${task.exitCode ?? '无'}）`, timeout: '后台任务超时，已停止' }[task.status]}：${task.command.slice(0, 100)}${outputTail(task, 800)}`;
 
 export async function createApp({ store = new Store(), provider, wechatOptions,
-  token = randomBytes(24).toString('hex'), assets: suppliedAssets, instanceId = randomBytes(16).toString('hex'), onShutdown } = {}) {
-  let wechat;
+  token = randomBytes(24).toString('hex'), assets: suppliedAssets, instanceId = randomBytes(16).toString('hex'), onShutdown,
+  autostart = new Autostart(), keepAwake = new KeepAwake() } = {}) {
+  let wechat, agent;
+  // A running turn may still read the result itself, so notices wait until it has ended.
+  const reportFinished = () => {
+    if (agent?.active || !wechat?.account.token) return;
+    // Sent through the outbox, so a result survives a temporary disconnect.
+    for (const task of processes.takeUnseen('wechat')) if (task.status !== 'cancelled') wechat.background(wechat.send(finishedNotice(task)));
+  };
   const processes = new Processes(task => {
     store.event('task', { task });
-    if (task.owner === 'wechat' && task.status !== 'running' && wechat?.status === 'connected') {
-      void wechat.send(`任务 ${task.id}：${task.status}\n退出码：${task.exitCode ?? '无'}\n${task.output.slice(-1600)}`).catch(e => { wechat.lastError = store.redact(e.message); });
-    }
+    if (task.owner !== 'wechat' || !wechat?.account.token) return;
+    if (task.progress) wechat.background(wechat.send(`后台任务仍在运行：${task.command.slice(0, 100)}${outputTail(task, 400, '\n\n最新输出：\n')}`));
+    else if (task.status !== 'running') reportFinished();
   });
   const skills = new Skills(store.dir, processes);
   const reminders = new Reminders(store, { getWechat: () => wechat });
-  const tools = new Tools(store, skills, processes, reminders);
+  const tools = new Tools(store, skills, processes, reminders, { getWechat: () => wechat });
   provider ||= new Provider(() => store.config);
-  const agent = new Agent(store, provider, tools);
+  agent = new Agent(store, provider, tools);
+  agent.onIdle = reportFinished;
   wechat = new Wechat(store, agent, wechatOptions);
   const assets = new Map();
   for (const [name, type] of [['index.html', 'text/html'], ['app.js', 'text/javascript'], ['style.css', 'text/css']]) {
@@ -70,7 +82,8 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
           .slice(-60).map(m => ({ role: m.role, text: m.content }));
         return json(res, 200, { config: store.publicConfig(), wechat: wechat.view(), busy: Boolean(agent.active),
           skills: await skills.list(), tasks: processes.list(), approvals: tools.approvals(), messages,
-          events: store.events.slice(-30), reminders: reminders.list(), dataDir: store.dir });
+          events: store.events.slice(-30), reminders: reminders.list(), dataDir: store.dir,
+          autostart: autostart.view(), keepAwake: { active: Boolean(keepAwake.child), error: keepAwake.error } });
       }
       if (req.method !== 'POST') return json(res, 405, { error: '不支持的请求' });
       if (!(req.headers['content-type'] || '').startsWith('application/json')) return json(res, 415, { error: '需要 JSON 请求' });
@@ -83,7 +96,17 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
           return;
         case '/api/config':
           if (agent.active || processes.list().some(t => t.status === 'running')) throw new Error('任务运行中，请先停止再修改设置');
-          return json(res, 200, store.saveConfig(input));
+          {
+            const saved = store.saveConfig(input);
+            keepAwake.apply(store.config.keepAwake);
+            return json(res, 200, saved);
+          }
+        case '/api/autostart': {
+          if (typeof input.enabled !== 'boolean') throw new Error('请求格式不正确');
+          // A login start has no useful working directory, so the workspace must be on disk first.
+          store.saveConfig({});
+          return json(res, 200, await autostart.set(input.enabled, { workingDirectory: store.config.workspace }));
+        }
         case '/api/model/test': return json(res, 200, { text: await provider.test(new AbortController().signal) });
         case '/api/chat': {
           if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 16000) throw new Error('消息应为 1 到 16000 字符');
@@ -94,8 +117,8 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
         case '/api/stop': wechat.mediaController?.abort(); return json(res, 200, { text: agent.stop() });
         case '/api/new':
           if (agent.active) throw new Error('请先停止当前处理');
-          store.clear(); return json(res, 200, { ok: true });
-        case '/api/approve': return json(res, 200, tools.decide(input.id, input.approved === true));
+          agent.reset(); return json(res, 200, { ok: true });
+        case '/api/approve': return json(res, 200, tools.decide(input.id, input.approved === true, input.always === true));
         case '/api/skills/install': {
           if (agent.active) throw new Error('请等当前处理完成');
           return json(res, 200, await skills.install(input, new AbortController().signal));
@@ -121,10 +144,12 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
       if (wechat.account.token) wechat.start();
       reminders.start();
+      keepAwake.apply(store.config.keepAwake);
+      await autostart.refresh();
       return `http://127.0.0.1:${server.address().port}/#${token}`;
     },
     async close() {
-      reminders.stop(); agent.stop(); wechat.stop(); wechat.loginController?.abort();
+      reminders.stop(); agent.stop(); wechat.stop(); wechat.loginController?.abort(); keepAwake.apply(false);
       server.closeAllConnections();
       await new Promise(resolve => server.close(resolve));
     },

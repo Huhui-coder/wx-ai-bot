@@ -64,6 +64,10 @@ jobs:
           bun test test/images.test.js
           bun test test/attachments.test.js
           bun test test/reminders.test.js
+          bun test test/outbound.test.js
+          bun test test/documents.test.js
+          bun test test/tasks.test.js
+          bun test test/system.test.js
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}

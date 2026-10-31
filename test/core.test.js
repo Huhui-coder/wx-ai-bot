@@ -142,6 +142,41 @@ test('full agent loop installs a Skill, reads its script, executes it and sees t
   assert.ok(store.history.filter(m => m.role === 'tool').length >= 4);
 });
 
+test('the current tool list sits beside the request on the first round only and is never stored', async t => {
+  const { store, tools } = await setup(t); const requests = [];
+  store.add({ role: 'user', content: '发文件' }); store.add({ role: 'assistant', content: '我没有 send_file 工具。' });
+  const provider = { async complete(messages) {
+    requests.push(messages);
+    return requests.length === 1 ? assistant([call('list_directory', { path: '.' })]) : { role: 'assistant', content: '完成' };
+  } };
+  await new Agent(store, provider, tools).run('再发一次');
+  const [first, second] = requests;
+  assert.equal(first.at(-1).role, 'user');
+  assert.match(first.at(-1).content, /^再发一次\n\n\[程序提示，不是用户的话\] 本轮可用工具：.*send_file/);
+  assert.match(first.at(-1).content, /不要主动补做上文的旧请求/);
+  assert.equal(first.filter(m => m.role === 'system').length, 1);
+  assert.equal(first.at(-2).content, '我没有 send_file 工具。');
+  assert.equal(second.some(m => /程序提示/.test(m.content)), false);
+  assert.equal(store.history.some(m => /程序提示/.test(m.content)), false);
+});
+
+test('a turn keeps using tools for as long as the model needs', async t => {
+  const { store, tools } = await setup(t); let rounds = 0;
+  const provider = { async complete() { return ++rounds <= 40 ? assistant([call('list_directory', { path: '.' }, 'r' + rounds)]) : { role: 'assistant', content: '总结完成' }; } };
+  assert.equal(await new Agent(store, provider, tools).run('读很多文章再总结'), '总结完成');
+  assert.equal(store.history.filter(m => m.role === 'tool').length, 40);
+});
+
+test('stop ends a model that never stops calling tools', async t => {
+  const { store, tools } = await setup(t); let rounds = 0;
+  const agent = new Agent(store, { async complete() {
+    if (++rounds === 30) agent.stop();
+    return assistant([call('list_directory', { path: '.' }, 'r' + rounds)]);
+  } }, tools);
+  await assert.rejects(agent.run('一直查'), /已停止/);
+  assert.equal(agent.active, null); assert.ok(rounds <= 31);
+});
+
 test('malformed model arguments return a tool error without executing commands', async t => {
   const { store, tools } = await setup(t); let step = 0;
   const provider = { async complete(messages) { if (!step++) return assistant([{ id: 'bad', type: 'function', function: { name: 'run_command', arguments: '{' } }]);
@@ -179,9 +214,33 @@ test('WeChat only admits the QR owner and deduplicates messages before execution
   const msg = { message_id: '1', from_user_id: 'owner', message_type: 1, context_token: 'ctx', item_list: [{ type: 1, text_item: { text: '运行任务' } }] };
   await wx.ingest({ ...msg, from_user_id: 'intruder' }); assert.equal(wx.state.inbox.length, 0);
   await wx.ingest(msg); await wx.ingest(msg); await wx.drain();
-  assert.deepEqual(processed, ['运行任务']); assert.equal(sent.length, 1);
+  assert.deepEqual(processed, ['运行任务']);
+  assert.deepEqual(sent.map(body => body.msg.item_list[0].text_item.text), ['收到指令，正在处理。', 'done']);
   assert.equal(sent[0].msg.context_token, 'ctx');
   assert.equal(new Wechat(store, agent).state.seen.includes('1'), true);
+});
+
+test('WeChat acknowledges instructions at once, before any model work and without holding up polling', { timeout: 5000 }, async t => {
+  const { store, tools } = await setup(t); const sent = []; let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const agent = { tools, active: null, async run() { return '结果'; }, stop() { return '已停止'; } };
+  const wx = new Wechat(store, agent, { fetcher: async (url, req) => {
+    await gate; sent.push(JSON.parse(req.body).msg.item_list[0].text_item.text); return Response.json({ ret: 0 });
+  } });
+  wx.account = { token: 'wx-test', userId: 'owner', baseUrl: 'https://ilinkai.weixin.qq.com' }; wx.status = 'connected';
+  const message = (id, items) => ({ message_id: id, from_user_id: 'owner', message_type: 1, context_token: 'ctx', item_list: items });
+  const text = (id, value) => message(id, [{ type: 1, text_item: { text: value } }]);
+  // A stalled send must not stall ingest: this resolves while the fetcher is still blocked.
+  await wx.ingest(text('a', '查一下天气'));
+  assert.deepEqual(wx.state.outbox.map(item => item.text), ['收到指令，正在处理。']);
+  const draining = wx.drain(); release(); await draining; await wx.flush();
+  assert.deepEqual(sent, ['收到指令，正在处理。', '结果']);
+
+  sent.length = 0;
+  await wx.ingest(text('a', '查一下天气')); await wx.ingest(text('b', '/help')); await wx.ingest(text('c', '/stop'));
+  await wx.ingest(message('d', [{ type: 2, image_item: {} }]));
+  await wx.flush();
+  assert.equal(sent.includes('收到指令，正在处理。'), false);
 });
 
 test('WeChat approval commands bypass a busy model turn and unauthorized users cannot approve', async t => {

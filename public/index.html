@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>微信小助理</title><link rel="stylesheet" href="/style.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>微信小助理</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"></head>
 <body>
   <div class="shell">
     <aside>
@@ -34,6 +34,11 @@
           <label>微信图片与附件保存目录<input id="imageDirectory" required placeholder="填写本机文件夹的完整路径"><small class="subtle">发给 Bot 的图片和附件自动下载解密，按日期存放，并回复保存位置；无需调用模型。</small></label>
           <label>助手偏好<textarea id="systemPrompt" rows="2"></textarea></label>
           <label class="checkbox"><input id="allowMutations" type="checkbox"><span>允许自动执行命令、写文件和安装 Skill<small>关闭时，每次操作可在这里或微信中允许。命令使用你的本机权限执行。</small></span></label>
+          <label>可自动执行的命令前缀<textarea id="allowedCommands" rows="2" placeholder="每行一条，例如 npm test"></textarea><small class="subtle">以这些内容开头、且不含 ; &amp; | &lt; &gt; $ 等连接符的命令不再询问。</small></label>
+          <label>单条命令最长运行时间（分钟）<input id="maxCommandMinutes" type="number" min="1" max="720" step="1" required></label>
+          <label class="checkbox"><input id="vision" type="checkbox"><span>模型支持看图<small>只有模型接受图片输入时才开启，否则分析图片会失败。</small></span></label>
+          <label class="checkbox"><input id="keepAwake" type="checkbox"><span>运行时防止电脑休眠<small>保存设置后生效。不能阻止合盖休眠，笔记本请接电源并保持开盖。</small></span></label>
+          <label class="checkbox" id="autostart-row"><input id="autostart" type="checkbox"><span>登录电脑后自动启动<small>勾选后立即生效。程序异常退出时也会自动重启。</small></span></label>
           <div class="actions"><button class="primary">保存设置</button><button id="test-model" type="button" class="quiet">测试连接</button></div>
           <p class="fine">Key 只保存在本机的私有配置文件中。对话和执行所需的内容会发送给你选择的模型服务。</p>
         </form>
@@ -43,7 +48,7 @@
           <p id="wechat-detail" class="subtle">绑定后，给 Bot 发消息即可调用当前模型。</p>
           <div class="actions"><button id="wechat-login" class="primary">生成微信二维码</button><button id="wechat-toggle" class="quiet" hidden>暂停连接</button></div>
           <button id="retry-replies" class="quiet" hidden>重试未送达的回复</button>
-          <div class="wechat-note"><h3>绑定之后，你可以这样说</h3><p>“帮我运行项目测试。”</p><p>“把这个 GitHub 仓库里的 Skill 装上。”</p><p>“用刚才安装的 Skill 处理这份文件。”</p><p>发图片、PDF、Word 或 ZIP，自动保存到电脑指定文件夹。</p></div>
+          <div class="wechat-note"><h3>绑定之后，你可以这样说</h3><p>“帮我运行项目测试。”</p><p>“把这个 GitHub 仓库里的 Skill 装上。”</p><p>“把工作目录里的周报发给我。”</p><p>“截个屏给我看看。”</p><p>“每天早上 8 点检查服务状态，有问题再告诉我。”</p><p>发图片、PDF、Word 或 ZIP，自动保存到电脑指定文件夹，之后可以让助手阅读和总结。</p></div>
         </div></div>
       </section>
       <section id="page-skills" class="page" hidden>
@@ -54,7 +59,7 @@
       </section>
       <section id="page-reminders" class="page" hidden>
         <div class="page-heading"><div><p class="eyebrow">A NOTE FOR LATER</p><h1>到时间，在微信提醒你。</h1><p>所有时间统一使用北京时间（Asia/Shanghai · UTC+8）。</p></div></div>
-        <div class="panel"><h2>直接在微信或对话页告诉助手</h2><p class="subtle">“每个工作日下午 6 点提醒我总结日报。”<br>“10 分钟后提醒我去开会。”<br>“查看我的提醒。”</p><p class="fine">创建后会确认具体日期、北京时间和编号。支持一次性、每天、周一至周五及每周指定星期。所有时间为北京时间；“工作日”按周一至周五，不计算节假日和调休。电脑需运行、联网；错过多个周期时恢复后只补发一次，再继续下一次计划。暂停微信连接也会暂停发送。停止聊天不会取消提醒。</p></div>
+        <div class="panel"><h2>直接在微信或对话页告诉助手</h2><p class="subtle">“每个工作日下午 6 点提醒我总结日报。”<br>“10 分钟后提醒我去开会。”<br>“每天早上 8 点运行 npm test，把结果发给我。”<br>“查看我的提醒。”</p><p class="fine">提醒到点发送固定文字；定时任务到点由模型无人值守地执行，创建时确认它可以运行哪些命令，未授权的操作会被拒绝并告诉你。创建后会确认具体日期、北京时间和编号。支持一次性、每天、周一至周五及每周指定星期。所有时间为北京时间；“工作日”按周一至周五，不计算节假日和调休。电脑需运行、联网；错过多个周期时恢复后只补发一次，再继续下一次计划。暂停微信连接也会暂停发送。停止聊天不会取消提醒。</p></div>
         <div class="task-heading"><h2>提醒列表</h2><span id="reminder-count">0 条待提醒</span></div>
         <p id="reminder-clock" class="subtle"></p><div id="reminder-list" class="tasks"></div>
       </section>

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { commandPrefixes } from './grants.js';
 
 export const REMINDER_TIME_ZONE = 'Asia/Shanghai';
 const YEAR = 366 * 86400000;
+const INTERVAL_MINUTES = { min: 15, max: 1440 };
 const formatter = new Intl.DateTimeFormat('zh-CN', { timeZone: REMINDER_TIME_ZONE, year: 'numeric', month: '2-digit',
   day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 const active = item => ['scheduled', 'queued'].includes(item.status);
@@ -19,8 +21,12 @@ function parseTime(value) {
   return ms;
 }
 
-export function repeatRule(frequency, time, weekdays) {
-  if (!['daily', 'weekdays', 'weekly'].includes(frequency)) throw new Error('重复规则只支持 daily、weekdays 或 weekly');
+export function repeatRule(frequency, time, weekdays, { everyMinutes, anchor } = {}) {
+  if (frequency === 'interval') {
+    if (!Number.isInteger(everyMinutes) || everyMinutes < INTERVAL_MINUTES.min || everyMinutes > INTERVAL_MINUTES.max) throw new Error(`间隔须为 ${INTERVAL_MINUTES.min} 到 ${INTERVAL_MINUTES.max} 分钟的整数`);
+    return { frequency, everyMinutes, anchor };
+  }
+  if (!['daily', 'weekdays', 'weekly'].includes(frequency)) throw new Error('重复规则只支持 daily、weekdays、weekly 或 interval');
   if (typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('重复提醒时间须为北京时间 HH:mm，例如 18:00');
   let days;
   if (frequency === 'weekly') {
@@ -30,6 +36,10 @@ export function repeatRule(frequency, time, weekdays) {
   return { frequency, time, ...(days ? { weekdays: days } : {}) };
 }
 export function nextRepeat(rule, after) {
+  if (rule.frequency === 'interval') {
+    const step = rule.everyMinutes * 60000;
+    return new Date(rule.anchor + (Math.floor((after - rule.anchor) / step) + 1) * step).toISOString();
+  }
   const shanghai = new Date(after + 8 * 3600000);
   const [hour, minute] = rule.time.split(':').map(Number);
   for (let offset = 0; offset <= 7; offset++) {
@@ -43,6 +53,7 @@ export function nextRepeat(rule, after) {
 }
 export function repeatLabel(rule) {
   if (!rule) return '一次性提醒';
+  if (rule.frequency === 'interval') return `每 ${rule.everyMinutes} 分钟`;
   const days = ['一', '二', '三', '四', '五', '六', '日'];
   const label = rule.frequency === 'daily' ? '每天' : rule.frequency === 'weekdays' ? '周一至周五' : '每周' + rule.weekdays.map(d => days[d - 1]).join('、');
   return label + ' ' + rule.time + '（北京时间）';
@@ -73,18 +84,20 @@ export class Reminders {
     return { timeZone: REMINDER_TIME_ZONE, currentTime: reminderTime(this.now()),
       reminders: this.items.slice().sort((a, b) => Number(active(b)) - Number(active(a)) || (active(a) ? Date.parse(a.dueAt) - Date.parse(b.dueAt) : Date.parse(b.dueAt) - Date.parse(a.dueAt))).map(item => this.view(item)) };
   }
-  create({ text, dueAt, afterSeconds, repeat, time, weekdays }, { requestId } = {}) {
+  create({ text, dueAt, afterSeconds, repeat, time, weekdays, everyMinutes, kind, quiet, allowedCommands, allowWrites }, { requestId } = {}) {
     if (requestId) {
       const existing = this.items.find(item => item.requestId === requestId);
       if (existing) return this.view(existing);
     }
-    if (typeof text !== 'string' || !text.trim() || text.length > 1000) throw new Error('提醒内容应为 1 到 1000 字');
+    const task = kind === 'task';
+    if (typeof text !== 'string' || !text.trim() || text.length > (task ? 4000 : 1000)) throw new Error(task ? '任务说明应为 1 到 4000 字' : '提醒内容应为 1 到 1000 字');
+    const grants = task ? { commands: commandPrefixes(allowedCommands ?? []), writes: allowWrites === true } : undefined;
     const now = this.now();
     const recurring = repeat !== undefined && repeat !== 'none';
     let rule, when;
     if (recurring) {
       if (dueAt !== undefined || afterSeconds !== undefined) throw new Error('重复提醒请填写 repeat 和 time，不填写 dueAt 或 afterSeconds');
-      rule = repeatRule(repeat, time, weekdays); when = Date.parse(nextRepeat(rule, now));
+      rule = repeatRule(repeat, time, weekdays, { everyMinutes, anchor: now }); when = Date.parse(nextRepeat(rule, now));
     } else {
       if (time !== undefined || weekdays !== undefined) throw new Error('一次性提醒不使用 time 或 weekdays');
       if ((dueAt !== undefined) === (afterSeconds !== undefined)) throw new Error('请选择具体日期 dueAt 或相对秒数 afterSeconds，不能同时填写');
@@ -97,7 +110,7 @@ export class Reminders {
     const { wx, userId, botId } = this.binding();
     if (!wx.state.context) throw new Error('请先在微信给 Bot 发一条消息，再创建提醒');
     const item = { id: randomUUID(), text: this.store.redact(text.trim()), dueAt: new Date(when).toISOString(),
-      status: 'scheduled', ...(rule ? { repeat: rule } : {}), createdAt: new Date(now).toISOString(), userId, botId, ...(requestId ? { requestId } : {}) };
+      status: 'scheduled', ...(rule ? { repeat: rule } : {}), ...(task ? { kind, quiet: quiet === true, grants } : {}), createdAt: new Date(now).toISOString(), userId, botId, ...(requestId ? { requestId } : {}) };
     this.items.push(item); this.save(); this.store.event('reminder_created', this.view(item));
     return this.view(item);
   }
@@ -148,6 +161,7 @@ export class Reminders {
       }
       if (['stopped', 'unbound', 'expired'].includes(wx.status) || !wx.state.context) continue;
       if (item.status !== 'queued') { item.status = 'queued'; changed = true; }
+      if (item.kind === 'task') { wx.queueTask(item, this.now()); continue; }
       wx.queueReminder(item, this.now()); queued = true;
     }
     if (changed) this.save();
