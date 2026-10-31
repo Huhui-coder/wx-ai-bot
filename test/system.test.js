@@ -35,10 +35,11 @@ test('a damaged data file falls back to the last good copy instead of stopping t
   assert.equal((await fs.readdir(root)).some(name => name.endsWith('.tmp')), false);
 });
 
-test('writes keep private permissions and /new leaves no old conversation behind', { skip: process.platform === 'win32' }, async t => {
+test('writes keep private permissions and /new leaves no old conversation behind', async t => {
   const root = await dir(t); const store = new Store(root);
   store.add({ role: 'user', content: '私密内容' }); store.add({ role: 'assistant', content: 'ok' });
-  assert.equal((await fs.stat(path.join(root, 'history.json.bak'))).mode & 0o777, 0o600);
+  // Windows uses ACLs; Bun 1.2.17 also ignores node:test's skip option.
+  if (process.platform !== 'win32') assert.equal((await fs.stat(path.join(root, 'history.json.bak'))).mode & 0o777, 0o600);
   store.clear();
   assert.equal(syncFS.existsSync(path.join(root, 'history.json.bak')), false);
   assert.equal(await fs.readFile(path.join(root, 'history.json'), 'utf8'), '[]');
