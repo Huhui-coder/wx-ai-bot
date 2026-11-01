@@ -12,5 +12,10 @@ const result = spawnSync('bun', ['build', '--compile', '--minify', '--env=disabl
   path.join(root, 'scripts/standalone.js'), '--outfile', output], { cwd: root, stdio: 'inherit' });
 if (result.error) throw new Error('构建需要开发者安装 Bun，最终用户无需安装。' + result.error.message);
 if (result.status !== 0) process.exit(result.status || 1);
+// Bun appends the app to a signed runtime, and recent macOS kills a binary whose signature no longer matches.
+if (process.platform === 'darwin' && target.includes('darwin')) {
+  const signed = spawnSync('codesign', ['--force', '--sign', '-', output], { stdio: 'inherit' });
+  if (signed.status !== 0) throw new Error('macOS 程序签名失败');
+}
 const stat = await fs.stat(output);
 console.log(`已生成 ${output}\n大小 ${(stat.size / 1024 / 1024).toFixed(1)} MB；内含运行时与网页，无需 Node/Python。`);

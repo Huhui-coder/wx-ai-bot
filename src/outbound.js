@@ -5,7 +5,7 @@ import { IMAGE_MAX_BYTES, imageExtension } from './images.js';
 import { attachmentName } from './attachments.js';
 
 const CDN = 'https://novac2c.cdn.weixin.qq.com/c2c';
-const MEDIA_IMAGE = 1, MEDIA_FILE = 3;
+const MEDIA_IMAGE = 1, MEDIA_VIDEO = 2, MEDIA_FILE = 3;
 // HEIC, TIFF and AVIF do not preview reliably in the chat, so they go out as files.
 const PREVIEWABLE = new Set(['png', 'jpg', 'gif', 'webp', 'bmp']);
 
@@ -37,7 +37,7 @@ async function postCiphertext(url, body, { fetcher, signal }) {
   }
   throw failure;
 }
-export async function uploadMedia(file, { request, fetcher = fetch, toUserId, signal, maxBytes = IMAGE_MAX_BYTES }) {
+export async function uploadMedia(file, { request, fetcher = fetch, toUserId, signal, maxBytes = IMAGE_MAX_BYTES, name: label, video = false }) {
   const stat = await fs.stat(file);
   if (!stat.isFile()) throw new Error('只能发送文件');
   if (!stat.size) throw new Error('文件是空的，未发送');
@@ -47,12 +47,13 @@ export async function uploadMedia(file, { request, fetcher = fetch, toUserId, si
   const key = randomBytes(16), filekey = randomBytes(16).toString('hex'), aeskey = key.toString('hex');
   const cipher = createCipheriv('aes-128-ecb', key, null);
   const ciphertext = Buffer.concat([cipher.update(bytes), cipher.final()]);
-  const target = await request('ilink/bot/getuploadurl', { filekey, media_type: image ? MEDIA_IMAGE : MEDIA_FILE, to_user_id: toUserId,
+  const target = await request('ilink/bot/getuploadurl', { filekey, media_type: video ? MEDIA_VIDEO : image ? MEDIA_IMAGE : MEDIA_FILE, to_user_id: toUserId,
     rawsize: bytes.length, rawfilemd5: createHash('md5').update(bytes).digest('hex'), filesize: ciphertext.length, no_need_thumb: true, aeskey }, { signal });
   const param = await postCiphertext(uploadURL(target, filekey), ciphertext, { fetcher, signal });
   // The protocol carries the hex key text as base64, not the 16 raw bytes.
   const media = { encrypt_query_param: param, aes_key: Buffer.from(aeskey).toString('base64'), encrypt_type: 1 };
-  const name = attachmentName(path.basename(file));
+  const name = attachmentName(label || path.basename(file));
+  if (video) return { name, bytes: bytes.length, kind: 'video', item: { type: 5, video_item: { media, video_size: ciphertext.length } } };
   return { name, bytes: bytes.length, kind: image ? 'image' : 'file', item: image
     ? { type: 2, image_item: { media, mid_size: ciphertext.length } }
     : { type: 4, file_item: { media, file_name: name, len: String(bytes.length) } } };

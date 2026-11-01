@@ -1,27 +1,48 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>微信小助理</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>赛博女友</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"></head>
 <body>
   <div class="shell">
     <aside>
-      <a class="brand" href="#"><span class="brand-icon">微</span><span>微信小助理<small>在微信里，让电脑帮你做事。</small></span></a>
+      <a class="brand" href="#"><span class="brand-icon">她</span><span>赛博女友<small>住在微信里，也能帮你做事。</small></span></a>
       <nav aria-label="主导航">
         <button class="nav active" data-page="chat">对话<span>01</span></button>
-        <button class="nav" data-page="settings">连接设置<span>02</span></button>
-        <button class="nav" data-page="skills">Skills<span>03</span></button>
-        <button class="nav" data-page="reminders">提醒<span>04</span></button>
+        <button class="nav" data-page="persona">人格<span>02</span></button>
+        <button class="nav" data-page="settings">连接设置<span>03</span></button>
+        <button class="nav" data-page="skills">Skills<span>04</span></button>
+        <button class="nav" data-page="reminders">提醒<span>05</span></button>
       </nav>
       <div class="aside-foot"><span id="connection-dot" class="dot"></span><span id="aside-status">本机运行中</span><small>模型由你选择，任务在这台电脑执行。</small></div>
     </aside>
     <main>
       <header><span id="breadcrumb">工作台 / 对话</span><span class="local-badge"><i></i> 本机应用</span></header>
       <section id="page-chat" class="page">
-        <div class="page-heading"><div><p class="eyebrow">YOUR LOCAL ASSISTANT</p><h1>聊一句，做点事。</h1><p>这里和微信使用同一个模型、同一段对话。</p></div><button id="new-chat" class="quiet">新对话 ↗</button></div>
+        <div class="page-heading"><div><p class="eyebrow">SHE LIVES IN YOUR WECHAT</p><h1>她在等你说话。</h1><p>这里和微信是同一个她、同一段对话。</p></div><button id="new-chat" class="quiet">新对话 ↗</button></div>
         <div id="setup-hint" class="hint" hidden>先在连接设置中填写模型 API Key，即可开始对话。微信可以稍后绑定。</div>
+        <div id="persona-hint" class="hint" hidden>她还没有人设。到「人格」页给她取个名字、设定性格，再勾选启用。</div>
         <div id="messages" class="messages" aria-live="polite"></div>
         <div id="approvals" class="approvals"></div>
-        <form id="chat-form" class="composer"><textarea id="chat-input" rows="2" placeholder="例如：看看这个项目怎么运行，帮我执行测试。" aria-label="消息内容"></textarea><div class="composer-bottom"><span id="model-label">DeepSeek</span><div><button id="stop" type="button" class="quiet" hidden>停止处理</button><button id="send" class="primary">发送 ↑</button></div></div></form>
+        <form id="chat-form" class="composer"><textarea id="chat-input" rows="2" placeholder="说点什么吧，也可以让她帮你看文件、跑命令。" aria-label="消息内容"></textarea><div class="composer-bottom"><span id="model-label">DeepSeek</span><div><button id="stop" type="button" class="quiet" hidden>停止处理</button><button id="send" class="primary">发送 ↑</button></div></div></form>
         <div class="task-heading"><h2>本机任务</h2><span id="busy-label">准备就绪</span></div><div id="tasks" class="tasks"></div>
+      </section>
+      <section id="page-persona" class="page" hidden>
+        <div class="page-heading"><div><p class="eyebrow">MAKE HER YOURS</p><h1>她是什么样的人，由你决定。</h1><p>填好后保存，她在微信里就按这个人设和你聊天。</p></div></div>
+        <div class="settings-grid"><form id="persona-form" class="panel"><div class="panel-title"><span class="step">01</span><h2>她是谁</h2></div>
+          <label class="checkbox"><input id="personaEnabled" type="checkbox"><span>启用人格<small>关闭时恢复成普通微信助手。启用后建议开一次新对话，她才不会被旧聊天带回助手的语气。</small></span></label>
+          <label>她的名字<input id="personaName" maxlength="40" placeholder="小雅"></label>
+          <label>她怎么称呼你<input id="personaTitle" maxlength="40" placeholder="笨蛋、宝贝、主人"></label>
+          <label>平时的性格<textarea id="personaPersonality" rows="3" maxlength="2000" placeholder="嘴硬心软，爱吐槽，其实很黏人"></textarea></label>
+          <label>口头禅<input id="personaCatchphrases" maxlength="500" placeholder="哼、才不是呢"></label>
+          <label>外貌<textarea id="personaAppearance" rows="2" maxlength="1000" placeholder="黑色长发，戴细框眼镜，喜欢穿宽松卫衣"></textarea><small class="subtle">AI 生成形象照和自拍时使用。</small></label>
+          <label>要记住的事<textarea id="personaMemories" rows="5" placeholder="每行一条，例如：我对花生过敏"></textarea><small class="subtle">聊天时她也会把重要的事记到这里，你可以随时修改或删除。最多 100 条，每条 200 字以内。</small></label>
+          <div class="actions"><button class="primary">保存人格</button></div>
+        </form>
+        <div class="panel"><div class="panel-title"><span class="step">02</span><h2>形象照</h2><span id="portrait-state" class="pill">未设置</span></div>
+          <div id="portrait-box" class="portrait-box"><p class="subtle">上传一张，或填好外貌后生成一张。</p></div>
+          <div class="actions"><button id="portrait-upload" type="button" class="primary">上传形象照</button><button id="portrait-draft" type="button" class="quiet">AI 生成</button><button id="portrait-accept" type="button" class="quiet" hidden>就用这张</button></div>
+          <input id="portrait-file" type="file" accept="image/png,image/jpeg" hidden>
+          <p class="fine">她之后的自拍和视频都以这张为参考，长相才能保持一致。上传支持 JPG 和 PNG，正脸清晰的半身照效果最好；请只使用你有权使用的图片，不要上传真实他人或未成年人的照片。AI 生成需要一到两分钟，会消耗生图额度，需要先在连接设置中填写生图 Key。</p>
+        </div></div>
       </section>
       <section id="page-settings" class="page" hidden>
         <div class="page-heading"><div><p class="eyebrow">CONNECT ONCE</p><h1>接上你的模型和微信。</h1><p>电脑上的程序负责执行，模型负责理解你的意图。</p></div></div>
@@ -31,7 +52,7 @@
           <label>模型名称<input id="model" required placeholder="deepseek-flash"></label>
           <label>API Key <span id="key-state" class="subtle"></span><input id="apiKey" type="password" autocomplete="new-password" placeholder="在本机填写，留空保留已有 Key"></label>
           <label>工作目录<input id="workspace" required placeholder="/Users/you/Projects"></label>
-          <label>微信图片与附件保存目录<input id="imageDirectory" required placeholder="填写本机文件夹的完整路径"><small class="subtle">发给 Bot 的图片和附件自动下载解密，按日期存放，并回复保存位置；无需调用模型。</small></label>
+          <label>微信图片与附件保存目录<input id="imageDirectory" required placeholder="填写本机文件夹的完整路径"><small class="subtle">发给 Bot 的图片和附件自动下载解密，按日期存放。未启用人格时直接回复保存位置，启用人格后由她来回应。</small></label>
           <label>助手偏好<textarea id="systemPrompt" rows="2"></textarea></label>
           <label class="checkbox"><input id="allowMutations" type="checkbox"><span>允许自动执行命令、写文件和安装 Skill<small>关闭时，每次操作可在这里或微信中允许。命令使用你的本机权限执行。</small></span></label>
           <label>可自动执行的命令前缀<textarea id="allowedCommands" rows="2" placeholder="每行一条，例如 npm test"></textarea><small class="subtle">以这些内容开头、且不含 ; &amp; | &lt; &gt; $ 等连接符的命令不再询问。</small></label>
@@ -39,8 +60,20 @@
           <label class="checkbox"><input id="vision" type="checkbox"><span>模型支持看图<small>只有模型接受图片输入时才开启，否则分析图片会失败。</small></span></label>
           <label class="checkbox"><input id="keepAwake" type="checkbox"><span>运行时防止电脑休眠<small>保存设置后生效。不能阻止合盖休眠，笔记本请接电源并保持开盖。</small></span></label>
           <label class="checkbox" id="autostart-row"><input id="autostart" type="checkbox"><span>登录电脑后自动启动<small>勾选后立即生效。程序异常退出时也会自动重启。</small></span></label>
+          <h3 class="form-section">语音</h3>
+          <label>豆包语音 App ID<input id="doubaoAppId" autocomplete="off" placeholder="在火山引擎语音控制台获取"></label>
+          <label>豆包语音 Access Token <span id="doubao-state" class="subtle"></span><input id="doubaoToken" type="password" autocomplete="new-password" placeholder="在本机填写，留空保留已有 Token"></label>
+          <label>豆包语音音色<input id="doubaoVoice" autocomplete="off" placeholder="zh_female_chunribu_uranus_bigtts"><small class="subtle">填豆包语音合成 2.0 的音色 ID，或声音复刻得到的 S_ 开头的 ID。</small></label>
+          <div class="actions"><button id="test-voice" type="button" class="quiet">试听已保存的音色</button></div>
+          <audio id="voice-preview" controls hidden></audio>
+          <h3 class="form-section">生图</h3>
+          <label>生图 API Key <span id="image-state" class="subtle"></span><input id="imageApiKey" type="password" autocomplete="new-password" placeholder="在 1route.dev 创建，留空保留已有 Key"></label>
+          <div class="actions"><button id="test-image" type="button" class="quiet">校验已保存的 Key</button></div>
+          <h3 class="form-section">视频</h3>
+          <label>视频 API Key <span id="video-state" class="subtle"></span><input id="videoApiKey" type="password" autocomplete="new-password" placeholder="在 pixstag.com 创建，留空保留已有 Key"><small class="subtle">填写后，她可以录说话的小视频发给你，需要先设定形象照。每条约需两到四分钟，会消耗视频积分。</small></label>
+          <div class="actions"><button id="test-video" type="button" class="quiet">查询视频积分</button></div>
           <div class="actions"><button class="primary">保存设置</button><button id="test-model" type="button" class="quiet">测试连接</button></div>
-          <p class="fine">Key 只保存在本机的私有配置文件中。对话和执行所需的内容会发送给你选择的模型服务。</p>
+          <p class="fine">Key 只保存在本机的私有配置文件中。对话和执行所需的内容会发送给你选择的模型服务，要念的话发送给豆包语音，画面描述和形象照发送给 1route.dev，视频台词、形象照和音色样本发送给 PixStag。</p>
         </form>
         <div class="panel wechat-panel"><div class="panel-title"><span class="step">02</span><h2>微信 Bot</h2><span id="wechat-status" class="pill">未绑定</span></div>
           <div class="qr-box" id="qr-box"><div class="qr-placeholder"><span>扫一扫</span><p>生成二维码后，用手机微信扫码确认。</p></div></div>
@@ -63,7 +96,7 @@
         <div class="task-heading"><h2>提醒列表</h2><span id="reminder-count">0 条待提醒</span></div>
         <p id="reminder-clock" class="subtle"></p><div id="reminder-list" class="tasks"></div>
       </section>
-      <footer>轻装运行 · 微信小助理 <span id="data-dir"></span></footer>
+      <footer>轻装运行 · 赛博女友 <span id="data-dir"></span></footer>
     </main>
   </div>
   <div id="toast" role="status" hidden></div>

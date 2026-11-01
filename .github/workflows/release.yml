@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [main]
+    branches: [main, girlfriend]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -68,6 +68,7 @@ jobs:
           bun test test/documents.test.js
           bun test test/tasks.test.js
           bun test test/system.test.js
+          bun test test/persona.test.js
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}
@@ -93,4 +94,4 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "微信小助理 $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "赛博女友 $GITHUB_REF_NAME" --generate-notes --latest=false

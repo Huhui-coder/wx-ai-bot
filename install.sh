@@ -12,8 +12,9 @@ case "$(uname -m)" in
 esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-base="https://github.com/$repo/releases/latest/download"
-printf '%s\n' '正在下载微信小助理…'
+# Pinned: "latest" belongs to the plain assistant on main.
+base="https://github.com/$repo/releases/download/v0.7.0-girlfriend"
+printf '%s\n' '正在下载赛博女友…'
 curl -fL --retry 3 "$base/$asset" -o "$tmp/$asset"
 curl -fsSL --retry 3 "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
 awk -v file="$asset" '$2 == file {print}' "$tmp/SHA256SUMS" > "$tmp/checksum"

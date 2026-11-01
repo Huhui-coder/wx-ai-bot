@@ -1,7 +1,8 @@
 const $ = id => document.getElementById(id);
 const auth = location.hash.slice(1) || sessionStorage.getItem('weixin-lite-token') || '';
 if (location.hash) { sessionStorage.setItem('weixin-lite-token', auth); history.replaceState(null, '', location.pathname); }
-let state, loaded = false, disconnected = false, qrValue = '', messagesKey = '', remindersKey = '', toastTimer;
+let state, loaded = false, disconnected = false, qrValue = '', messagesKey = '', remindersKey = '', toastTimer, memoriesDirty = false, portraitSaved = false;
+const PERSONA_FIELDS = { personaName: 'name', personaTitle: 'userTitle', personaPersonality: 'personality', personaCatchphrases: 'catchphrases', personaAppearance: 'appearance' };
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
 async function api(route, data) {
   const response = await fetch('/api/' + route, { method: data === undefined ? 'GET' : 'POST',
@@ -12,9 +13,9 @@ async function api(route, data) {
 function el(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text != null) node.textContent = text; return node; }
 function button(text, action, className = 'quiet') { const b = el('button', className, text); b.type = 'button'; b.onclick = () => action().catch(e => toast(e.message)); return b; }
 function page(name) {
-  for (const key of ['chat', 'settings', 'skills', 'reminders']) $('page-' + key).hidden = key !== name;
+  for (const key of ['chat', 'persona', 'settings', 'skills', 'reminders']) $('page-' + key).hidden = key !== name;
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('active', b.dataset.page === name));
-  $('breadcrumb').textContent = '工作台 / ' + ({ chat: '对话', settings: '连接设置', skills: 'Skills', reminders: '提醒' }[name]);
+  $('breadcrumb').textContent = '工作台 / ' + ({ chat: '对话', persona: '人格', settings: '连接设置', skills: 'Skills', reminders: '提醒' }[name]);
 }
 document.querySelectorAll('.nav').forEach(b => b.onclick = () => page(b.dataset.page));
 document.querySelector('.brand').onclick = e => { e.preventDefault(); page('chat'); };
@@ -24,11 +25,12 @@ function renderMessages(messages) {
   const key = JSON.stringify(messages); if (key === messagesKey) return; messagesKey = key;
   const box = $('messages'); const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   box.replaceChildren();
-  if (!messages.length) { const empty = el('div', 'empty-chat'); empty.append(el('div', 'intro', '你好，我在你的电脑上。'), el('p', '', '可以陪你聊天，也可以检查文件、执行命令，或按 Skill 的说明完成任务。\n先连接模型，再把我带进微信。')); box.append(empty); }
+  if (!messages.length) { const empty = el('div', 'empty-chat'); empty.append(el('div', 'intro', '你来啦。'), el('p', '', '可以陪你聊天，也可以帮你看文件、跑命令。\n先连接模型，再把我带进微信。')); box.append(empty); }
   for (const message of messages) {
     const row = el('div', 'message ' + message.role); const content = el('div');
-    content.append(el('div', 'message-label', message.role === 'user' ? '你' : '助手'), el('div', 'message-body', message.text));
-    row.append(el('div', 'avatar', message.role === 'user' ? '你' : '微'), content); box.append(row);
+    const name = state?.persona.enabled ? state.persona.name : '助手';
+    content.append(el('div', 'message-label', message.role === 'user' ? '你' : name), el('div', 'message-body', message.text));
+    row.append(el('div', 'avatar', message.role === 'user' ? '你' : Array.from(state?.persona.enabled ? name : '微')[0]), content); box.append(row);
   }
   if (nearBottom) box.scrollTop = box.scrollHeight;
 }
@@ -53,11 +55,27 @@ function renderReminders(data) {
     return card;
   }) : [el('div', 'empty', '还没有提醒。可以在微信里说：“10 分钟后提醒我总结日报。”')]));
 }
+const CONFIG_FIELDS = ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory', 'doubaoAppId', 'doubaoVoice'];
+function showPortrait(image, alt) { const node = el('img'); node.src = image; node.alt = alt; $('portrait-box').replaceChildren(node); }
+async function loadPortrait() {
+  const { image } = await api('persona/portrait'); portraitSaved = Boolean(image);
+  $('portrait-state').textContent = portraitSaved ? '已设置' : '未设置';
+  if (image) showPortrait(image, '她的形象照');
+}
+function personaData() {
+  const data = { enabled: $('personaEnabled').checked, memories: $('personaMemories').value.split('\n') };
+  for (const [id, name] of Object.entries(PERSONA_FIELDS)) data[name] = $(id).value;
+  return data;
+}
+async function savePersona() { await api('persona', personaData()); memoriesDirty = false; }
 async function refresh() {
   try {
     state = await api('state');
     if (!loaded) {
-      for (const name of ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory']) $(name).value = state.config[name];
+      for (const name of CONFIG_FIELDS) $(name).value = state.config[name];
+      for (const [id, name] of Object.entries(PERSONA_FIELDS)) $(id).value = state.persona[name];
+      $('personaEnabled').checked = state.persona.enabled;
+      await loadPortrait();
       for (const name of ['allowMutations', 'vision', 'keepAwake']) $(name).checked = state.config[name];
       $('allowedCommands').value = state.config.allowedCommands.join('\n');
       $('maxCommandMinutes').value = state.config.maxCommandMinutes;
@@ -65,8 +83,13 @@ async function refresh() {
       loaded = true;
     }
     disconnected = false;
+    if (!memoriesDirty) $('personaMemories').value = state.persona.memories.join('\n');
+    $('doubao-state').textContent = state.config.hasDoubaoToken ? '· 已保存' : '';
+    $('image-state').textContent = state.config.hasImageKey ? '· 已保存' : '';
+    $('video-state').textContent = state.config.hasVideoKey ? '· 已保存' : '';
     $('autostart-row').hidden = !state.autostart.supported; $('autostart').checked = state.autostart.enabled;
     $('setup-hint').hidden = state.config.hasApiKey;
+    $('persona-hint').hidden = !state.config.hasApiKey || state.persona.enabled;
     $('key-state').textContent = state.config.hasApiKey ? '· 已保存' : '';
     $('model-label').textContent = state.config.model;
     $('send').disabled = state.busy; $('stop').hidden = !state.busy && !state.tasks.some(t => t.status === 'running');
@@ -109,12 +132,58 @@ async function refresh() {
 }
 $('settings-form').onsubmit = async event => {
   event.preventDefault(); const data = {};
-  for (const name of ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory']) data[name] = $(name).value;
-  if ($('apiKey').value.trim()) data.apiKey = $('apiKey').value.trim();
+  for (const name of CONFIG_FIELDS) data[name] = $(name).value;
+  for (const name of ['apiKey', 'doubaoToken', 'imageApiKey', 'videoApiKey']) if ($(name).value.trim()) data[name] = $(name).value.trim();
   for (const name of ['allowMutations', 'vision', 'keepAwake']) data[name] = $(name).checked;
   data.allowedCommands = $('allowedCommands').value.split('\n');
   data.maxCommandMinutes = Number($('maxCommandMinutes').value);
-  try { const saved = await api('config', data); $('imageDirectory').value = saved.imageDirectory; $('apiKey').value = ''; toast('设置已保存'); await refresh(); if (state.keepAwake.error) toast(state.keepAwake.error); } catch (e) { toast(e.message); }
+  try { const saved = await api('config', data); $('imageDirectory').value = saved.imageDirectory; $('doubaoVoice').value = saved.doubaoVoice; for (const name of ['apiKey', 'doubaoToken', 'imageApiKey', 'videoApiKey']) $(name).value = ''; toast('设置已保存'); await refresh(); if (state.keepAwake.error) toast(state.keepAwake.error); } catch (e) { toast(e.message); }
+};
+$('personaMemories').oninput = () => { memoriesDirty = true; };
+$('persona-form').onsubmit = async event => {
+  event.preventDefault(); const enabling = $('personaEnabled').checked && !state.persona.enabled;
+  try { await savePersona(); toast(enabling ? '人格已启用。建议在对话页点“新对话”，换掉旧聊天的语气' : '人格已保存'); await refresh(); } catch (e) { toast(e.message); }
+};
+$('portrait-draft').onclick = async () => {
+  const b = $('portrait-draft'); b.disabled = true;
+  try {
+    await savePersona(); toast('正在生成形象照，大约需要一到两分钟…');
+    const { image } = await api('persona/portrait/draft', {}); showPortrait(image, '形象照候选'); $('portrait-accept').hidden = false; toast('生成好了。满意就点“就用这张”，不满意可以再生成一张');
+  } catch (e) { toast(e.message); } finally { b.disabled = false; }
+};
+// Compressed here because the browser can decode every photo, and the video upload is slow.
+async function compressPhoto(file) {
+  const bitmap = await createImageBitmap(file).catch(() => { throw new Error('这张图片打不开，请换一张 JPG 或 PNG'); });
+  for (const [side, quality] of [[1024, 0.85], [1024, 0.7], [800, 0.7], [640, 0.65]]) {
+    const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+    const context = canvas.getContext('2d'); context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const image = canvas.toDataURL('image/jpeg', quality);
+    if (image.length * 0.75 <= 450000) return image;
+  }
+  throw new Error('图片太复杂，压缩后仍然过大，请换一张');
+}
+$('portrait-upload').onclick = () => $('portrait-file').click();
+$('portrait-file').onchange = async () => {
+  const file = $('portrait-file').files[0], b = $('portrait-upload'); if (!file) return;
+  b.disabled = true;
+  try { await api('persona/portrait/upload', { image: await compressPhoto(file) }); $('portrait-accept').hidden = true; await loadPortrait(); toast('形象照已设置'); }
+  catch (e) { toast(e.message); } finally { b.disabled = false; $('portrait-file').value = ''; }
+};
+$('portrait-accept').onclick = async () => { try { await api('persona/portrait/accept', {}); $('portrait-accept').hidden = true; await loadPortrait(); toast('形象照已设置'); } catch (e) { toast(e.message); } };
+$('test-voice').onclick = async () => {
+  const b = $('test-voice'); b.disabled = true;
+  try { toast('正在合成语音…'); const { audio } = await api('voice/test', {}); const player = $('voice-preview'); player.src = audio; player.hidden = false; await player.play().catch(() => {}); } catch (e) { toast(e.message); } finally { b.disabled = false; }
+};
+$('test-video').onclick = async () => {
+  const b = $('test-video'); b.disabled = true;
+  try { const r = await api('video/check', {}); toast(`Key 可用 · 剩余积分 ${r.credit ?? '未知'}`); } catch (e) { toast(e.message); } finally { b.disabled = false; }
+};
+$('test-image').onclick = async () => {
+  const b = $('test-image'); b.disabled = true;
+  try { const r = await api('image/check', {}); toast(`Key 可用 · ${r.group}${r.balance == null ? '' : ` · 余额 ${r.balance} ${r.unit}`}`); } catch (e) { toast(e.message); } finally { b.disabled = false; }
 };
 $('autostart').onchange = async () => { try { const result = await api('autostart', { enabled: $('autostart').checked }); toast(result.warning || (result.enabled ? '已开启自动启动' : '已关闭自动启动')); await refresh(); } catch (e) { toast(e.message); await refresh(); } };
 $('provider').onchange = () => { if ($('provider').value === 'deepseek') { $('baseUrl').value = 'https://api.deepseek.com'; $('model').value = 'deepseek-flash'; } };

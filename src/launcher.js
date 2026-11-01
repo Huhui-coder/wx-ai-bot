@@ -174,7 +174,7 @@ async function serve(dir, port, assets, compiled) {
   const temp = serviceFile(dir) + '.' + instanceId + '.tmp';
   await fs.writeFile(temp, JSON.stringify(record), { mode: 0o600 });
   await fs.rename(temp, serviceFile(dir));
-  console.log(`微信小助理 ${VERSION} 后台服务已就绪，PID ${process.pid}`);
+  console.log(`赛博女友 ${VERSION} 后台服务已就绪，PID ${process.pid}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => void shutdown());
   // Saved state is atomic, so restarting is safer than running on in an unknown state.
   for (const event of ['uncaughtException', 'unhandledRejection']) process.on(event, error => {
@@ -186,14 +186,14 @@ async function serve(dir, port, assets, compiled) {
 export async function main(argv = [], { compiled = false, assets } = {}) {
   const opts = options(argv);
   if (opts.command === 'help') {
-    console.log(`微信小助理 ${VERSION}\n\n用法：weixin-lite [命令] [选项]\n\n  weixin-lite          后台启动并自动打开网页；已运行时打开原页面\n  weixin-lite status   查看运行状态\n  weixin-lite stop     停止后台服务和当前任务\n  weixin-lite logs     查看最近的运行日志\n\n选项：\n  --no-open           启动但不打开浏览器\n  --port <端口>       设置端口，默认 3210；0 表示自动选择\n  --version           查看版本\n  --help              查看帮助\n\n配置和微信登录保存在 ~/.weixin-lite，关闭网页和终端不影响服务。\n电脑休眠或关机期间无法响应；可在网页设置中开启登录后自动启动和防止休眠。`); return;
+    console.log(`赛博女友 ${VERSION}\n\n用法：weixin-lite [命令] [选项]\n\n  weixin-lite          后台启动并自动打开网页；已运行时打开原页面\n  weixin-lite status   查看运行状态\n  weixin-lite stop     停止后台服务和当前任务\n  weixin-lite logs     查看最近的运行日志\n\n选项：\n  --no-open           启动但不打开浏览器\n  --port <端口>       设置端口，默认 3210；0 表示自动选择\n  --version           查看版本\n  --help              查看帮助\n\n配置和微信登录保存在 ~/.weixin-lite，关闭网页和终端不影响服务。\n电脑休眠或关机期间无法响应；可在网页设置中开启登录后自动启动和防止休眠。`); return;
   }
   if (opts.command === 'version') { console.log(VERSION); return; }
   const dir = dataDirectory();
   if (opts.command === '__supervise') { await supervise(dir, opts.port, compiled); return; }
   if (opts.command === '__serve') {
     try { await serve(dir, opts.port, assets, compiled); }
-    catch (e) { console.error('微信小助理：' + e.message); process.exit(STARTUP_FAILED); }
+    catch (e) { console.error('赛博女友：' + e.message); process.exit(STARTUP_FAILED); }
     return;
   }
   if (opts.command === 'logs') { console.log(await tail(dir)); return; }
@@ -203,14 +203,14 @@ export async function main(argv = [], { compiled = false, assets } = {}) {
       if (record && !staleRecord(record)) {
         if (isAlive(record.pid)) throw new Error('服务进程仍存在但暂时无法连接，请稍后重试；未操作该进程');
         if (isAlive(record.supervisor)) {
-          if (opts.command === 'status') { console.log('微信小助理正在重启'); return; }
+          if (opts.command === 'status') { console.log('赛博女友正在重启'); return; }
           process.kill(record.supervisor, 'SIGTERM');
           for (let i = 0; i < 30 && isAlive(record.supervisor); i++) await delay(100);
         }
       }
-      console.log('微信小助理未运行'); return;
+      console.log('赛博女友未运行'); return;
     }
-    if (opts.command === 'status') { console.log(`微信小助理运行中 · PID ${record.pid}\n${record.url}\n数据目录：${dir}`); return; }
+    if (opts.command === 'status') { console.log(`赛博女友运行中 · PID ${record.pid}\n${record.url}\n数据目录：${dir}`); return; }
     const { base, headers } = connection(record);
     const res = await fetch(base + '/api/shutdown', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(2000), redirect: 'error' });
     if (!res.ok) throw new Error('服务拒绝停止，请查看日志');
@@ -218,7 +218,7 @@ export async function main(argv = [], { compiled = false, assets } = {}) {
       if (!await probe(record) && (await readService(dir))?.instanceId !== record.instanceId) {
         // The installer replaces the program next; Windows cannot do that while it is still running.
         for (let j = 0; j < 30 && isAlive(record.supervisor); j++) await delay(100);
-        console.log('微信小助理已停止'); return;
+        console.log('赛博女友已停止'); return;
       }
       await delay(100);
     }
@@ -252,7 +252,7 @@ export async function main(argv = [], { compiled = false, assets } = {}) {
       if (!record || !await probe(record)) throw new Error('启动超时，可用 weixin-lite logs 查看原因');
     }
   } finally { await release(); }
-  console.log(`${reused ? '微信小助理已在运行，打开原页面' : '微信小助理已在后台启动'}\n${record.url}\n停止：weixin-lite stop`);
+  console.log(`${reused ? '赛博女友已在运行，打开原页面' : '赛博女友已在后台启动'}\n${record.url}\n停止：weixin-lite stop`);
   if (opts.open) {
     try { await openBrowser(record.url); }
     catch { console.log('浏览器未能自动打开，请复制上面的完整链接。'); }

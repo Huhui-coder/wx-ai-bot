@@ -11,11 +11,13 @@ import { Agent } from './agent.js';
 import { Wechat } from './wechat.js';
 import { Reminders } from './reminders.js';
 import { Autostart, KeepAwake } from './system.js';
+import { voiceDataURL } from './voice.js';
 
+const PORTRAIT_UPLOAD_LIMIT = 8 * 1024 * 1024;
 const outputTail = (task, size, label = '\n\n') => task.output.trim() ? label + task.output.trim().slice(-size) : '';
 const finishedNotice = task => `${{ done: '后台任务完成', failed: `后台任务失败（退出码 ${task.exitCode ?? '无'}）`, timeout: '后台任务超时，已停止' }[task.status]}：${task.command.slice(0, 100)}${outputTail(task, 800)}`;
 
-export async function createApp({ store = new Store(), provider, wechatOptions,
+export async function createApp({ store = new Store(), provider, wechatOptions, mediaFetcher,
   token = randomBytes(24).toString('hex'), assets: suppliedAssets, instanceId = randomBytes(16).toString('hex'), onShutdown,
   autostart = new Autostart(), keepAwake = new KeepAwake() } = {}) {
   let wechat, agent;
@@ -33,7 +35,7 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
   });
   const skills = new Skills(store.dir, processes);
   const reminders = new Reminders(store, { getWechat: () => wechat });
-  const tools = new Tools(store, skills, processes, reminders, { getWechat: () => wechat });
+  const tools = new Tools(store, skills, processes, reminders, { getWechat: () => wechat, ...(mediaFetcher ? { fetcher: mediaFetcher } : {}) });
   provider ||= new Provider(() => store.config);
   agent = new Agent(store, provider, tools);
   agent.onIdle = reportFinished;
@@ -46,9 +48,11 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(store.redact(JSON.stringify(data)));
   };
-  async function body(req) {
+  async function body(req, limit = 256000) {
     let bytes = 0; const chunks = [];
-    for await (const chunk of req) { bytes += chunk.length; if (bytes > 256000) throw new Error('请求过大'); chunks.push(chunk); }
+    // Bun answers 200 if the loop throws while the request is still open, so finish reading first.
+    for await (const chunk of req) { bytes += chunk.length; if (bytes <= limit) chunks.push(chunk); }
+    if (bytes > limit) throw new Error('请求过大');
     const value = JSON.parse(Buffer.concat(chunks).toString() || '{}');
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('请求格式不正确');
     return value;
@@ -61,7 +65,7 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; media-src data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
       const address = server.address();
       const expected = `127.0.0.1:${address.port}`;
@@ -80,14 +84,15 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
       if (req.method === 'GET' && url.pathname === '/api/state') {
         const messages = store.history.filter(m => ['user', 'assistant'].includes(m.role) && m.content)
           .slice(-60).map(m => ({ role: m.role, text: m.content }));
-        return json(res, 200, { config: store.publicConfig(), wechat: wechat.view(), busy: Boolean(agent.active),
+        return json(res, 200, { config: store.publicConfig(), persona: store.persona, wechat: wechat.view(), busy: Boolean(agent.active),
           skills: await skills.list(), tasks: processes.list(), approvals: tools.approvals(), messages,
           events: store.events.slice(-30), reminders: reminders.list(), dataDir: store.dir,
           autostart: autostart.view(), keepAwake: { active: Boolean(keepAwake.child), error: keepAwake.error } });
       }
+      if (req.method === 'GET' && url.pathname === '/api/persona/portrait') return json(res, 200, await tools.portraitView());
       if (req.method !== 'POST') return json(res, 405, { error: '不支持的请求' });
       if (!(req.headers['content-type'] || '').startsWith('application/json')) return json(res, 415, { error: '需要 JSON 请求' });
-      const input = await body(req);
+      const input = await body(req, url.pathname === '/api/persona/portrait/upload' ? PORTRAIT_UPLOAD_LIMIT : undefined);
       switch (url.pathname) {
         case '/api/shutdown':
           if (!onShutdown) throw new Error('当前服务不由命令行管理');
@@ -107,6 +112,18 @@ export async function createApp({ store = new Store(), provider, wechatOptions,
           store.saveConfig({});
           return json(res, 200, await autostart.set(input.enabled, { workingDirectory: store.config.workspace }));
         }
+        case '/api/persona':
+          if (agent.active) throw new Error('正在处理消息，请稍后再保存人格');
+          return json(res, 200, store.savePersona(input));
+        case '/api/persona/portrait/draft': return json(res, 200, await tools.draftPortrait(new AbortController().signal));
+        case '/api/persona/portrait/upload': return json(res, 200, await tools.uploadPortrait(input.image));
+        case '/api/persona/portrait/accept': return json(res, 200, await tools.acceptPortrait());
+        case '/api/voice/test': {
+          const name = store.persona.enabled ? store.persona.name : '你的助手';
+          return json(res, 200, { audio: voiceDataURL(await tools.speak(`你好呀，我是${name}，这是我现在的声音。`, new AbortController().signal)) });
+        }
+        case '/api/video/check': return json(res, 200, await tools.checkVideoKey(new AbortController().signal));
+        case '/api/image/check': return json(res, 200, await tools.checkImageKey(new AbortController().signal));
         case '/api/model/test': return json(res, 200, { text: await provider.test(new AbortController().signal) });
         case '/api/chat': {
           if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 16000) throw new Error('消息应为 1 到 16000 字符');

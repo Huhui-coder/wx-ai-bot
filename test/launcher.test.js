@@ -36,7 +36,7 @@ for (const variant of variants) {
     assert.equal(results.filter(r => /已在后台启动/.test(r.stdout)).length, 1);
     const record = await f.record(); const url = new URL(record.url);
     const headers = { Authorization: 'Bearer ' + url.hash.slice(1) };
-    const page = await (await fetch(url.origin)).text(); assert.match(page, /微信小助理/); assert.match(page, /id="imageDirectory"/); assert.match(page, /page-reminders/); assert.match(page, /每周指定星期/); assert.match(page, /微信图片与附件保存目录/);
+    const page = await (await fetch(url.origin)).text(); assert.match(page, /赛博女友/); assert.match(page, /id="imageDirectory"/); assert.match(page, /page-reminders/); assert.match(page, /每周指定星期/); assert.match(page, /微信图片与附件保存目录/);
     assert.match(await (await fetch(url.origin + '/app.js')).text(), /sessionStorage/);
     assert.match(await (await fetch(url.origin + '/style.css')).text(), /:root/);
     const state = await (await fetch(url.origin + '/api/state', { headers })).json();

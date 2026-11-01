@@ -1,17 +1,23 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { within } from './skills.js';
 import { readDocument, decodeText } from './documents.js';
-import { imageExtension } from './images.js';
+import { imageExtension, persistMedia } from './images.js';
 import { commandAllowed, suggestedPrefix } from './grants.js';
 import { screenshotCommand } from './system.js';
 import { repeatLabel } from './reminders.js';
+import { synthesize, voiceReady } from './voice.js';
+import { checkImageKey, generateImage, imageDataURL } from './imagegen.js';
+import { portraitPrompt, selfiePrompt } from './persona.js';
+import { compactReference } from './shrink.js';
+import { DIALOGUE_MAX_CHARS, REFERENCE_TARGET_BYTES, VOICE_SAMPLE_TEXT, checkVideoKey, generateVideo, videoPrompt, videoSeconds } from './video.js';
 
 const VISION_TYPES = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 const VISION_MAX_BYTES = 5 * 1024 * 1024, VISION_MAX_IMAGES = 3;
 const APPROVAL_TIMEOUT_MS = 900_000;
 const GATED = ['run_command', 'write_file', 'install_skill', 'capture_screen', 'schedule_task'];
+const GENERATED_FOLDER = 'AI生成';
 
 const field = (description, type = 'string') => ({ type, description });
 const tool = (name, description, properties, required = []) => ({ type: 'function', function: {
@@ -44,6 +50,22 @@ export const definitions = [
   }, ['path']),
   tool('view_image', '查看工作目录或微信收件目录内的图片（PNG、JPEG、GIF、WebP，最大 5 MB）。图片会附在下一轮消息中。', { path: field('相对或绝对文件路径') }, ['path']),
   tool('send_file', '把工作目录或微信收件目录内的文件发到用户绑定的微信，最大 25 MB。PNG、JPEG、GIF、WebP、BMP 以图片发送，其他以文件发送。', { path: field('相对或绝对文件路径') }, ['path']),
+  tool('send_voice', '把一段话合成语音，以 mp3 语音文件发到用户绑定的微信，用户点开文件收听。微信目前不支持程序发语音条。', {
+    text: field('要说的话，最多 200 字。只写念出来的内容，不写括号里的动作和表情'),
+  }, ['text']),
+  tool('generate_image', '生成一张图片并直接发到用户绑定的微信，不需要再调用 send_file。大约需要一到两分钟。', {
+    prompt: field('画面描述：场景、动作、穿着、光线和氛围，最多 2000 字'),
+    selfie: field('画面主角是你本人（自拍、生活照）时为 true，程序会用形象照保持长相一致；风景、美食等为 false', 'boolean'),
+    orientation: { type: 'string', enum: ['square', 'portrait', 'landscape'], description: '画幅：square 方图（默认），portrait 竖图，landscape 横图' },
+  }, ['prompt']),
+  tool('send_video', '录一段你本人对着镜头说话的短视频发到用户绑定的微信。长相按形象照，声音按你的音色，大约需要两到四分钟，每条都会消耗视频额度。三个参数都要根据此刻的聊天现写，不能重复以前写过的内容。', {
+    dialogue: field('你在视频里说的话，最多 60 字。口语，接得上刚才的聊天，只写念出来的内容'),
+    acting: field('此刻的情绪、表情和动作，写具体，例如：先委屈地嘟嘴，歪头看着镜头，说到一半忍不住笑出来'),
+    scene: field('你现在在哪、穿什么、光线怎样，要符合当前时间和聊天内容，例如：深夜窝在床上，穿着睡衣，只开了一盏暖黄的床头灯'),
+  }, ['dialogue', 'acting', 'scene']),
+  tool('remember', '把用户提到的、值得长期记住的事存入记忆，例如喜好、重要日子、约定。用户可在人格页查看和修改。不要存密码、密钥和验证码。', {
+    text: field('一条完整的记忆，最多 200 字，例如：用户对花生过敏'),
+  }, ['text']),
   tool('capture_screen', '截取电脑当前屏幕，保存到工作目录的「截图」文件夹并返回路径。需要给用户看时再调用 send_file。', {}),
   tool('write_file', '创建或覆盖工作目录内的文本文件。', { path: field('文件路径'), content: field('完整文件内容') }, ['path', 'content']),
   tool('run_command', '在本机执行 shell 命令，包括 npm、python、Skill 脚本。返回任务 ID，可继续查询。仅当用户要求操作时使用。', {
@@ -65,12 +87,18 @@ export const definitions = [
 ];
 
 export class Tools {
-  constructor(store, skills, processes, reminders, { getWechat } = {}) {
-    this.store = store; this.skills = skills; this.processes = processes; this.pending = new Map(); this.reminders = reminders; this.getWechat = getWechat;
+  constructor(store, skills, processes, reminders, { getWechat, fetcher = fetch, pollOptions } = {}) {
+    this.store = store; this.skills = skills; this.processes = processes; this.pending = new Map(); this.reminders = reminders; this.getWechat = getWechat; this.fetcher = fetcher; this.pollOptions = pollOptions;
     this.clearGrants();
   }
   clearGrants() { this.sessionCommands = new Set(); this.sessionWrites = false; }
-  definitions() { return this.store.config.vision ? definitions : definitions.filter(t => t.function.name !== 'view_image'); }
+  definitions() {
+    const { config, persona } = this.store;
+    const unavailable = new Set([...(config.vision ? [] : ['view_image']), ...(voiceReady(config) ? [] : ['send_voice']),
+      ...(config.imageApiKey ? [] : ['generate_image']), ...(persona.enabled ? [] : ['remember']),
+      ...(config.videoApiKey && persona.enabled ? [] : ['send_video'])]);
+    return definitions.filter(t => !unavailable.has(t.function.name));
+  }
   recentFiles() { return this.getWechat?.()?.state.received || []; }
   async resolvePath(input = '.', write = false) {
     if (typeof input !== 'string') throw new Error('路径必须是字符串');
@@ -100,6 +128,69 @@ export class Tools {
       }
     }
     return this.resolvePath(input);
+  }
+  // Checked before calling a paid service, so nothing is generated that cannot be delivered.
+  sendingWechat() {
+    const wx = this.getWechat?.();
+    if (!wx) throw new Error('微信服务尚未启动');
+    wx.assertSendable();
+    return wx;
+  }
+  keepGenerated(bytes, filename, signal) {
+    return persistMedia(bytes, { directory: path.join(this.store.config.imageDirectory, GENERATED_FOLDER), privateDir: this.store.dir, filename, signal });
+  }
+  async imagePlatform(signal) {
+    const key = this.store.config.imageApiKey;
+    if (this.imageGroup?.key !== key) this.imageGroup = { key, platform: (await checkImageKey(key, { fetcher: this.fetcher, signal })).platform };
+    return this.imageGroup.platform;
+  }
+  checkImageKey(signal) { return checkImageKey(this.store.config.imageApiKey, { fetcher: this.fetcher, signal }); }
+  speak(text, signal) { return synthesize(text, this.store.config, { fetcher: this.fetcher, signal }); }
+  checkVideoKey(signal) { return checkVideoKey(this.store.config.videoApiKey, { fetcher: this.fetcher, signal }); }
+  // Cached per voice: the sample only tells the video model how she sounds.
+  async voiceSample(signal) {
+    const { config } = this.store;
+    if (!voiceReady(config)) return null;
+    const file = path.join(this.store.dir, `voice-sample-${createHash('sha256').update(config.doubaoVoice).digest('hex').slice(0, 16)}.mp3`);
+    const saved = await fs.readFile(file).catch(() => null);
+    if (saved) return saved;
+    const bytes = await this.speak(VOICE_SAMPLE_TEXT, signal);
+    await fs.writeFile(file, bytes, { mode: 0o600 });
+    return bytes;
+  }
+  async film({ dialogue, acting, scene }, signal) {
+    const portrait = await this.portrait();
+    if (!portrait) throw new Error('还没有形象照，请用户先到人格页设定');
+    return generateVideo({ apiKey: this.store.config.videoApiKey, prompt: videoPrompt({ dialogue, acting, scene, appearance: this.store.persona.appearance }), seconds: videoSeconds(dialogue),
+      portrait: compactReference(portrait, REFERENCE_TARGET_BYTES), voiceSample: await this.voiceSample(signal).catch(() => null) }, { fetcher: this.fetcher, signal, ...this.pollOptions });
+  }
+  async paint({ prompt, orientation, reference, idempotencyKey, compact }, signal) {
+    const apiKey = this.store.config.imageApiKey;
+    if (!apiKey) throw new Error('请先在连接设置中填写生图 Key');
+    return generateImage({ apiKey, platform: await this.imagePlatform(signal), prompt, orientation, reference, idempotencyKey, compact }, { fetcher: this.fetcher, signal, ...this.pollOptions });
+  }
+  portraitPath(candidate = false) { return path.join(this.store.dir, candidate ? 'portrait-candidate.img' : 'portrait.img'); }
+  async portrait() { return fs.readFile(this.portraitPath()).catch(e => { if (e.code === 'ENOENT') return null; throw e; }); }
+  async portraitView() { const bytes = await this.portrait(); return { image: bytes ? imageDataURL(bytes) : null }; }
+  async draftPortrait(signal) {
+    if (!this.store.persona.appearance) throw new Error('请先填写她的外貌');
+    const bytes = await this.paint({ prompt: portraitPrompt(this.store.persona), orientation: 'portrait', compact: true }, signal);
+    await fs.writeFile(this.portraitPath(true), bytes, { mode: 0o600 });
+    return { image: imageDataURL(bytes) };
+  }
+  async uploadPortrait(dataUrl) {
+    const match = typeof dataUrl === 'string' && dataUrl.match(/^data:image\/(?:png|jpeg);base64,([A-Za-z\d+/]+={0,2})$/);
+    if (!match) throw new Error('只支持 JPG 或 PNG 图片');
+    const bytes = Buffer.from(match[1], 'base64');
+    if (!['png', 'jpg'].includes(imageExtension(bytes))) throw new Error('只支持 JPG 或 PNG 图片');
+    await fs.writeFile(this.portraitPath(), bytes, { mode: 0o600 });
+    await fs.rm(this.portraitPath(true), { force: true });
+    return this.portraitView();
+  }
+  async acceptPortrait() {
+    try { await fs.rename(this.portraitPath(true), this.portraitPath()); }
+    catch (e) { if (e.code === 'ENOENT') throw new Error('请先生成一张形象照'); throw e; }
+    return this.portraitView();
   }
   covered(name, args, context) {
     const { commands = [], writes = false } = context.grants || {};
@@ -199,6 +290,35 @@ export class Tools {
         if (!wx) throw new Error('微信服务尚未启动');
         return wx.sendFile(await this.resolveReadable(args.path), { signal: context.signal });
       }
+      case 'send_voice': {
+        const wx = this.sendingWechat();
+        const audio = await this.speak(args.text, context.signal);
+        const saved = await this.keepGenerated(audio, `voice-${randomUUID().slice(0, 12)}.mp3`, context.signal);
+        const { enabled, name } = this.store.persona;
+        return wx.sendFile(saved.path, { signal: context.signal, name: `${enabled ? name : '助手'}的语音.mp3` });
+      }
+      case 'generate_image': {
+        if (typeof args.prompt !== 'string' || !args.prompt.trim() || args.prompt.length > 2000) throw new Error('画面描述应为 1 到 2000 字');
+        const wx = this.sendingWechat();
+        const reference = args.selfie === true ? await this.portrait() : null;
+        const prompt = args.selfie === true ? selfiePrompt(this.store.persona, args.prompt.trim(), Boolean(reference)) : args.prompt.trim();
+        const bytes = await this.paint({ prompt, orientation: args.orientation, reference, idempotencyKey: context.invocationId }, context.signal);
+        const saved = await this.keepGenerated(bytes, `image-${randomUUID().slice(0, 12)}.${imageExtension(bytes)}`, context.signal);
+        let sent;
+        try { sent = await wx.sendFile(saved.path, { signal: context.signal }); }
+        catch (e) { throw new Error(`图片已保存到 ${saved.path}，但发送失败：${e.message}`); }
+        return { ...sent, path: saved.path, ...(args.selfie === true && !reference ? { note: '还没有形象照，这张的长相可能和之前不一致' } : {}) };
+      }
+      case 'send_video': {
+        for (const key of ['dialogue', 'acting', 'scene']) if (typeof args[key] !== 'string' || !args[key].trim() || args[key].length > 500) throw new Error('台词、表演和场景都要填写');
+        if (Array.from(args.dialogue.trim()).length > DIALOGUE_MAX_CHARS) throw new Error(`台词最多 ${DIALOGUE_MAX_CHARS} 字`);
+        const wx = this.sendingWechat();
+        const bytes = await this.film({ dialogue: args.dialogue.trim(), acting: args.acting.trim(), scene: args.scene.trim() }, context.signal);
+        const saved = await this.keepGenerated(bytes, `video-${randomUUID().slice(0, 12)}.mp4`, context.signal);
+        try { return { ...await wx.sendFile(saved.path, { signal: context.signal, video: true }), path: saved.path }; }
+        catch (e) { throw new Error(`视频已保存到 ${saved.path}，但发送失败：${e.message}`); }
+      }
+      case 'remember': return this.store.remember(args.text);
       case 'capture_screen': {
         const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
         const file = await this.resolvePath(path.join('截图', `screen-${stamp}.png`), true);

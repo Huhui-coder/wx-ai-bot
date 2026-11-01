@@ -1,10 +1,10 @@
 {
   "name": "weixin-lite-assistant",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "private": true,
   "type": "module",
-  "description": "微信 + 自选模型 API + 本机工具 + SKILL.md",
+  "description": "住在微信里的赛博女友：自定义人格 + 语音 + 生图 + 本机工具",
   "engines": { "node": ">=22.13.0" },
   "bin": { "weixin-lite": "bin/weixin-lite.js" },
   "files": ["bin/", "src/", "public/", "README.md", "LICENSE"],

@@ -1,6 +1,8 @@
-# wx-ai-bot · 微信小助理
+# wx-ai-bot · 赛博女友
 
-一个本机运行的轻量微信 AI 助手。填写 DeepSeek 或其他兼容 Chat Completions 的模型 API，扫码绑定微信；日常聊天和电脑操作均由你配置的模型处理。
+住在微信里的赛博女友，运行在你自己的电脑上。性格、称呼、口头禅和记忆都由你设定，她能陪你聊天，发语音、自拍和说话的小视频，也能帮你操作电脑。填写 DeepSeek 或其他兼容 Chat Completions 的模型 API，扫码绑定微信即可使用。
+
+这是 `girlfriend` 分支的版本。普通微信助手版本在 `main` 分支，两者分别发布。
 
 不要求安装 Hermes、OpenClaw、Claude Code 或 Codex。
 
@@ -11,13 +13,13 @@
 macOS（Apple Silicon 与 Intel）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Huhui-coder/wx-ai-bot/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Huhui-coder/wx-ai-bot/girlfriend/install.sh | sh
 ```
 
 Windows 64 位，在 PowerShell 中执行：
 
 ```powershell
-irm https://raw.githubusercontent.com/Huhui-coder/wx-ai-bot/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Huhui-coder/wx-ai-bot/girlfriend/install.ps1 | iex
 ```
 
 安装器会从 [GitHub Releases](https://github.com/Huhui-coder/wx-ai-bot/releases) 下载对应系统的程序，验证 SHA-256，安装到当前用户目录并自动打开网页，不需要管理员权限。
@@ -197,19 +199,33 @@ Skill 是一个包含 `SKILL.md` 的目录，可附带 `scripts/`、`references/
 
 依赖普通命令、脚本和文件操作的 Skill 最容易复用。依赖 Codex、Claude、特定 MCP、飞书工具或其他专用平台 API 的 Skill，需要相应工具适配、软件或凭据。第一版不承诺所有 Skill 都兼容。
 
+## 人格、语音和生图
+
+在网页的「人格」页填写她的名字、对你的称呼、性格、口头禅、外貌和要记住的事，勾选启用后，她就按这个人设在微信里聊天。关闭后恢复成普通助手。启用时建议开一次新对话，否则旧聊天会把她带回助手的语气。
+
+- 记忆：网页上手填的内容和她聊天时自己存下的内容在同一个列表里，可以随时修改或删除，`/new` 不会清除。
+- 语音：在「连接设置」填写豆包语音的 App ID、Access Token 和音色，可以用 2.0 音色 ID，也可以用声音复刻得到的 `S_` 开头的 ID。没有配置视频时，她的语音以 mp3 文件发送，点开收听。
+- 生图：在「连接设置」填写 [1route.dev](https://www.1route.dev/keys) 的 API Key，程序按 Key 所属分组选择 GPT Image 或 Nano Banana。生成一张约需一到两分钟，图片和语音都在收件目录的 `AI生成` 文件夹里留一份。
+- 形象照：在「人格」页上传一张，或由 AI 生成后选定，之后的自拍和视频都以它为参考，长相才能保持一致。请只使用你有权使用的图片，不要上传真实他人或未成年人的照片。
+- 视频：在「连接设置」填写 [PixStag](https://pixstag.com) 的 API Key。她想哄你、撒娇或你想看她时，会根据当下的聊天现写台词、表演和场景，用形象照和你的音色生成一段说话的视频（MiniMax H3），每条约需两到四分钟，按时长消耗积分（实测 8 秒到 15 秒的视频约 6 到 10 积分）。视频失败时她会改发语音或文字。
+
+为什么不是语音条：微信协议定义了语音消息，但程序发出的语音消息目前会被静默丢弃，接口返回成功，手机上什么也看不到（见 [Tencent/openclaw-weixin#215](https://github.com/Tencent/openclaw-weixin/issues/215)、[#209](https://github.com/Tencent/openclaw-weixin/issues/209)）。平台恢复前，语音只能走视频或文件。
+
+程序内置了不可由人设覆盖的规则：她一律是成年人，不生成露骨内容；被认真询问时承认自己是 AI；不用情感手段留住用户；用户遇到真实危机时认真对待并劝其求助。
+
 ## 数据与边界
 
 - 数据默认放在 `~/.weixin-lite/`，可用 `WEIXIN_LITE_HOME` 修改；配置、对话、微信凭据和轮询状态均保存在本机。请勿把该目录提交到 Git。
 - 本机测试页与微信共用同一段会话，一次处理一个模型任务。
 - 文件工具限制在工作目录内；已安装 Skill 的文件通过独立工具读取。shell 有本机用户权限，非沙箱。
-- 支持文本、微信已转写的语音，以及图片和文件附件的收发。屏幕点击和语音识别尚未实现。
+- 支持文本、微信已转写的语音，以及图片和文件附件的收发。屏幕点击和本地语音识别尚未实现。
 - 命令保留最近的输出，任务列表只保留当前进程内的任务，程序重启后不再跟踪之前的命令。
 - 微信入站消息先持久化再推进游标；重复 ID 不重复执行。重启中断的模型任务不会自动重跑，以免重复修改，并会通知你；图片和附件任务可安全恢复。
 - 微信发送失败的回复会留在本机待发队列，连接恢复后自动重试。无法保证平台永远兼容，也无法保证网络超时后消息严格只送达一次。
 - 模型请求遇到网络错误、限流或服务端错误时自动重试 2 次。
 - 数据文件落盘后再替换，并保留上一版；文件损坏时自动恢复到上一版。对话历史有上限，`service.log` 超过 5 MB 时轮转。
 - 程序和电脑需保持运行、联网。关闭终端不影响后台服务，`weixin-lite stop` 才会停止。
-- 对话和所需工具结果会交给你选定的模型服务；微信消息经腾讯通道传输。
+- 对话和所需工具结果会交给你选定的模型服务；微信消息经腾讯通道传输。配置语音、生图和视频后，要念的文字发送给豆包语音，画面描述和形象照发送给 1route.dev，视频台词、形象照和音色样本发送给 PixStag。
 
 ## 开发与验证
 

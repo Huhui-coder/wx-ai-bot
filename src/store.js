@@ -4,6 +4,8 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { imageDirectory } from './images.js';
 import { commandPrefixes } from './grants.js';
+import { EMPTY_PERSONA, MEMORY_LIMIT, MEMORY_MAX_CHARS, mergePersona } from './persona.js';
+import { DEFAULT_VOICE } from './voice.js';
 
 export const dataDirectory = () => path.resolve(process.env.WEIXIN_LITE_HOME || path.join(os.homedir(), '.weixin-lite'));
 const HISTORY_LIMIT = 600, HISTORY_KEEP = 400;
@@ -27,10 +29,12 @@ export class Store {
       baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKey: '',
       workspace: process.cwd(), allowMutations: false, allowedCommands: [], vision: false,
       keepAwake: false, maxCommandMinutes: 30,
+      doubaoAppId: '', doubaoToken: '', doubaoVoice: DEFAULT_VOICE, imageApiKey: '', videoApiKey: '',
       systemPrompt: '用中文沟通，回答简洁，先完成任务再汇报真实结果。',
       ...this.read('config', {}),
     };
     this.config.imageDirectory ||= path.join(this.config.workspace, '微信收件箱');
+    this.persona = { ...EMPTY_PERSONA, ...this.read('persona', {}) };
     this.wechatToken = this.read('wechat', {}).token;
     this.events = [];
     this.history = this.read('history', []);
@@ -69,7 +73,7 @@ export class Store {
   }
   saveConfig(patch) {
     const next = { ...this.config };
-    for (const k of ['baseUrl', 'model', 'apiKey', 'workspace', 'systemPrompt', 'imageDirectory']) {
+    for (const k of ['baseUrl', 'model', 'apiKey', 'workspace', 'systemPrompt', 'imageDirectory', 'doubaoAppId', 'doubaoToken', 'doubaoVoice', 'imageApiKey', 'videoApiKey']) {
       if (typeof patch[k] === 'string') next[k] = patch[k].trim();
     }
     for (const k of ['allowMutations', 'vision', 'keepAwake']) {
@@ -84,6 +88,8 @@ export class Store {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('模型地址必须是有效 HTTP(S) 地址，不能包含密码、查询参数或片段');
     if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('远程模型接口必须使用 HTTPS');
     if (!next.model || next.model.length > 160) throw new Error('请填写模型名称');
+    next.doubaoVoice ||= DEFAULT_VOICE;
+    if (!/^[\w.-]{1,128}$/.test(next.doubaoVoice)) throw new Error('豆包音色应为音色 ID，例如 ' + DEFAULT_VOICE);
     next.workspace = fs.realpathSync(path.resolve(next.workspace));
     if (!fs.statSync(next.workspace).isDirectory()) throw new Error('工作目录不存在');
     next.imageDirectory = imageDirectory(next.imageDirectory, this.dir);
@@ -96,12 +102,27 @@ export class Store {
     return this.publicConfig();
   }
   publicConfig() {
-    const { apiKey, ...rest } = this.config;
-    return { ...rest, hasApiKey: Boolean(apiKey || process.env.DEEPSEEK_API_KEY) };
+    const { apiKey, doubaoToken, imageApiKey, videoApiKey, ...rest } = this.config;
+    return { ...rest, hasApiKey: Boolean(apiKey || process.env.DEEPSEEK_API_KEY),
+      hasDoubaoToken: Boolean(doubaoToken), hasImageKey: Boolean(imageApiKey), hasVideoKey: Boolean(videoApiKey) };
+  }
+  savePersona(patch) {
+    const next = mergePersona(this.persona, patch);
+    this.write('persona', next); this.persona = next;
+    return next;
+  }
+  // The model adds memories during a chat; the page can still edit or delete any of them.
+  remember(text) {
+    const item = typeof text === 'string' ? text.trim() : '';
+    if (!item || item.length > MEMORY_MAX_CHARS) throw new Error(`记忆应为 1 到 ${MEMORY_MAX_CHARS} 字`);
+    if (this.persona.memories.includes(item)) return { remembered: true, total: this.persona.memories.length };
+    if (this.persona.memories.length >= MEMORY_LIMIT) throw new Error(`记忆已满 ${MEMORY_LIMIT} 条，请用户到人格页整理`);
+    this.savePersona({ memories: [...this.persona.memories, item] });
+    return { remembered: true, total: this.persona.memories.length };
   }
   redact(value) {
     let result = String(value);
-    for (const secret of [this.config.apiKey, process.env.DEEPSEEK_API_KEY, this.wechatToken]) {
+    for (const secret of [this.config.apiKey, process.env.DEEPSEEK_API_KEY, this.wechatToken, this.config.doubaoToken, this.config.imageApiKey, this.config.videoApiKey]) {
       if (secret) result = result.split(secret).join('[已隐藏密钥]');
     }
     return result;

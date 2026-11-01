@@ -5,13 +5,14 @@ import { saveAttachment } from './attachments.js';
 import { reminderTime, reminderDeliveryId } from './reminders.js';
 import { uploadMedia } from './outbound.js';
 import { VERSION as APP_VERSION } from './version.js';
+import { QUIET_REPLY } from './agent.js';
+import { chatBubbles } from './persona.js';
 
 const API = 'https://ilinkai.weixin.qq.com';
 const VERSION = '2.4.10';
-const QUIET_REPLY = /^\s*\[无需通知\]/;
 const RECEIVED = '收到指令，正在处理。';
 const ACTION_LABELS = { run_command: '执行命令', write_file: '写入文件', install_skill: '安装 Skill', capture_screen: '截屏', schedule_task: '创建定时任务' };
-const OUTBOX_RETRY_MS = 30000;
+const OUTBOX_RETRY_MS = 30000, TYPING_KEEPALIVE_MS = 5000, TYPING_ON = 1, TYPING_OFF = 2;
 const APPROVAL_WORDS = [[/^(同意|允许|批准|确认|可以|好的?|行|ok|yes|y)[。.!！]*$/i, '/approve'],
   [/^(拒绝|不同意|不允许|不行|不可以|no|n)[。.!！]*$/i, '/deny'],
   [/^(始终|始终允许|一直允许|总是允许|always)[。.!！]*$/i, '/always']];
@@ -184,6 +185,7 @@ export class Wechat {
     if (this.state.seen.includes(id)) return;
     if (msg.context_token) this.state.context = msg.context_token;
     const text = this.approvalShortcut(inboundText(msg));
+    const spoken = (msg.item_list || []).some(item => item.type === 3);
     const media = (msg.item_list || []).flatMap(item => item.type === 2 ? [{ type: 'image', item: item.image_item || {} }] : item.type === 4 ? [{ type: 'file', item: item.file_item || {} }] : []);
     this.state.seen.push(id); this.state.seen = this.state.seen.slice(-2000);
     if ((!text && !media.length) || text.length > 16000) { this.save(); return; }
@@ -191,7 +193,7 @@ export class Wechat {
       this.save(); await this.send('等待处理的消息较多，请稍后再发。').catch(() => {}); return;
     }
     if (media.length > 9) { this.save(); await this.send('一条消息最多保存 9 个图片或附件，请分批发送。').catch(() => {}); return; }
-    const job = { id, text, status: 'pending', ...(media.length ? { media, savedMedia: [],
+    const job = { id, text, status: 'pending', ...(spoken ? { spoken } : {}), ...(media.length ? { media, savedMedia: [],
       directory: this.store.config.imageDirectory, day: mediaDay() } : {}) };
     this.state.inbox.push(job); this.trimInbox();
     this.save();
@@ -203,7 +205,7 @@ export class Wechat {
       catch (e) { reply = this.store.redact(e.message); job.status = 'failed'; }
       this.save(); await this.send(reply).catch(e => { this.lastError = e.message; });
     // In the background: the poll loop must not wait on the send, and the outbox keeps it first.
-    } else if (text) this.background(this.send(RECEIVED));
+    } else if (text && !this.store.persona.enabled) this.background(this.send(RECEIVED));
   }
   async control(text) {
     const [name, id] = text.trim().split(/\s+/);
@@ -241,17 +243,22 @@ export class Wechat {
         if (job.media) { await this.receiveMedia(job); continue; }
         if (this.agent.active) { await delay(500); continue; }
         job.status = 'running'; this.save();
+        const persona = this.store.persona.enabled;
+        const stopTyping = persona ? this.startTyping() : () => {};
         try {
           const answer = await this.agent.run(job.task ? this.taskPrompt(job) : job.text, { owner: 'wechat', requestId: job.id,
-            unattended: Boolean(job.task), grants: job.task?.grants, notify: async event => {
+            unattended: Boolean(job.task), grants: job.task?.grants, hint: job.spoken ? '用户这条消息是语音，优先用语音回复。' : '', notify: async event => {
               if (event.type === 'approval') await this.send(`需要授权：${ACTION_LABELS[event.name] || event.name}\n${event.summary}\n\n回复“同意”允许一次${event.scope ? `，“始终”本次对话内允许${event.scope === '工作目录内的写入' ? event.scope : `以 ${event.scope} 开头的命令`}` : ''}，“拒绝”取消。\n编号 ${event.id}`);
             } });
           job.status = 'done'; this.save();
-          if (!job.task?.quiet || !QUIET_REPLY.test(answer)) await this.send(job.task ? '⏰ 定时任务结果：\n' + answer : answer);
+          if (answer && (!job.task?.quiet || !QUIET_REPLY.test(answer))) {
+            if (persona) for (const bubble of chatBubbles(answer)) await this.send(bubble);
+            else await this.send(job.task ? '⏰ 定时任务结果：\n' + answer : answer);
+          }
         } catch (e) {
           if (job.status === 'running') { job.status = 'failed'; this.save(); await this.send((job.task ? '⏰ 定时任务失败：' : '处理未完成：') + e.message).catch(() => {}); }
           this.lastError = this.store.redact(e.message);
-        }
+        } finally { stopTyping(); }
       }
     } finally { this.draining = false; }
   }
@@ -272,12 +279,33 @@ export class Wechat {
     this.state.deliveredReminders.push({ id, at: new Date().toISOString() });
     this.state.deliveredReminders = this.state.deliveredReminders.slice(-500);
   }
-  async sendFile(file, { signal } = {}) {
+  // Best effort and purely cosmetic: a failure here must never affect the reply itself.
+  startTyping() {
+    let stopped = false;
+    const ping = status => this.typingTicket().then(ticket => this.request('ilink/bot/sendtyping',
+      { ilink_user_id: this.account.userId, typing_ticket: ticket, status }, { timeout: 5000 })).catch(() => {});
+    void ping(TYPING_ON);
+    const timer = setInterval(() => void ping(TYPING_ON), TYPING_KEEPALIVE_MS);
+    timer.unref?.();
+    return () => { if (stopped) return; stopped = true; clearInterval(timer); void ping(TYPING_OFF); };
+  }
+  async typingTicket() {
+    if (this.typing?.context !== this.state.context) {
+      const { typing_ticket: ticket } = await this.request('ilink/bot/getconfig', { ilink_user_id: this.account.userId, context_token: this.state.context }, { timeout: 5000 });
+      if (!ticket) throw new Error('微信没有返回输入状态票据');
+      this.typing = { context: this.state.context, ticket };
+    }
+    return this.typing.ticket;
+  }
+  assertSendable() {
     if (!this.account.token) throw new Error('请先扫码绑定微信');
     if (!this.state.context) throw new Error('请先在微信给 Bot 发一条消息');
     if (['stopped', 'expired'].includes(this.status)) throw new Error('微信连接已暂停或失效，文件未发送');
+  }
+  async sendFile(file, { signal, name, video } = {}) {
+    this.assertSendable();
     const media = await uploadMedia(file, { request: (endpoint, body, options) => this.request(endpoint, body, options),
-      fetcher: this.fetcher, toUserId: this.account.userId, signal });
+      fetcher: this.fetcher, toUserId: this.account.userId, signal, name, video });
     // The fixed client_id lets the platform drop a duplicate after a timed-out attempt.
     const id = randomUUID();
     for (let attempt = 0; ; attempt++) {
@@ -312,14 +340,16 @@ export class Wechat {
     const errors = job.savedMedia.flatMap((result, index) => result.error ? [`第 ${index + 1} ${job.media[index].type === 'image' ? '张' : '个文件'}：${result.error}`] : []);
     const allImages = job.media.every(entry => entry.type === 'image');
     const noun = allImages ? '图片' : '文件';
-    const reply = [paths.length ? `已保存 ${paths.length} ${allImages ? '张图片' : '个文件'}：\n${paths.join('\n')}` : '',
+    const persona = this.store.persona.enabled;
+    const reply = [paths.length && !persona ? `已保存 ${paths.length} ${allImages ? '张图片' : '个文件'}：\n${paths.join('\n')}` : '',
       errors.length ? `${noun}保存失败：\n` + errors.join('\n') : ''].filter(Boolean).join('\n\n');
     job.status = errors.length ? 'failed' : 'done';
     delete job.media; // Expiring CDN tickets and decryption keys stay out of completed history.
     this.state.received = [...this.state.received, ...paths.map(file => ({ path: file, at: new Date().toISOString() }))].slice(-20);
-    if (job.text && paths.length) this.state.inbox.push({ id: job.id + '-ask', status: 'pending', text: `${job.text}\n\n这条消息附带的文件已保存：\n${paths.join('\n')}` });
+    const ask = job.text || (persona ? `[用户发来了${allImages ? '图片' : '文件'}，请回应]` : '');
+    if (ask && paths.length) this.state.inbox.push({ id: job.id + '-ask', status: 'pending', text: `${ask}\n\n这条消息附带的文件已保存：\n${paths.join('\n')}` });
     // Persist receipt and completion together, before attempting delivery.
-    this.state.outbox.push({ id: randomUUID(), text: this.store.redact(reply) });
+    if (reply) this.state.outbox.push({ id: randomUUID(), text: this.store.redact(reply) });
     this.trimOutbox(); this.save();
     this.mediaController = null;
     await this.flush().catch(e => { this.lastError = this.store.redact(e.message); });

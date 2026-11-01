@@ -2,13 +2,14 @@ $ErrorActionPreference = 'Stop'
 if (-not [Environment]::Is64BitOperatingSystem) { throw '需要 64 位 Windows。' }
 $repo = 'Huhui-coder/wx-ai-bot'
 $asset = 'weixin-lite-windows-x64.exe'
-$base = "https://github.com/$repo/releases/latest/download"
+# Pinned: "latest" belongs to the plain assistant on main.
+$base = "https://github.com/$repo/releases/download/v0.7.0-girlfriend"
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) ('weixin-lite-' + [Guid]::NewGuid().ToString('N'))
 $dest = Join-Path $env:LOCALAPPDATA 'WeixinLite'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 try {
-  Write-Host '正在下载微信小助理…'
+  Write-Host '正在下载赛博女友…'
   $download = Join-Path $tempDir $asset
   Invoke-WebRequest "$base/$asset" -OutFile $download -UseBasicParsing
   $sums = (Invoke-WebRequest "$base/SHA256SUMS" -UseBasicParsing).Content
