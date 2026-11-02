@@ -33,7 +33,8 @@
           <label>她怎么称呼你<input id="personaTitle" maxlength="40" placeholder="笨蛋、宝贝、主人"></label>
           <label>平时的性格<textarea id="personaPersonality" rows="3" maxlength="2000" placeholder="嘴硬心软，爱吐槽，其实很黏人"></textarea></label>
           <label>口头禅<input id="personaCatchphrases" maxlength="500" placeholder="哼、才不是呢"></label>
-          <label>外貌<textarea id="personaAppearance" rows="2" maxlength="1000" placeholder="黑色长发，戴细框眼镜，喜欢穿宽松卫衣"></textarea><small class="subtle">AI 生成形象照和自拍时使用。</small></label>
+          <label>外貌<textarea id="personaAppearance" rows="2" maxlength="1000" placeholder="黑色长发，戴细框眼镜，喜欢穿宽松卫衣"></textarea><small class="subtle">AI 生成形象照和自拍时使用，要和形象照对得上。</small></label>
+          <label>画风<select id="personaStyle"><option value="real">真人</option><option value="anime">动漫</option></select><small class="subtle">形象照、自拍和视频都按这个画风生成，要和形象照一致。</small></label>
           <label>要记住的事<textarea id="personaMemories" rows="5" placeholder="每行一条，例如：我对花生过敏"></textarea><small class="subtle">聊天时她也会把重要的事记到这里，你可以随时修改或删除。最多 100 条，每条 200 字以内。</small></label>
           <div class="actions"><button class="primary">保存人格</button></div>
         </form>
@@ -70,7 +71,8 @@
           <label>生图 API Key <span id="image-state" class="subtle"></span><input id="imageApiKey" type="password" autocomplete="new-password" placeholder="在 1route.dev 创建，留空保留已有 Key"></label>
           <div class="actions"><button id="test-image" type="button" class="quiet">校验已保存的 Key</button></div>
           <h3 class="form-section">视频</h3>
-          <label>视频 API Key <span id="video-state" class="subtle"></span><input id="videoApiKey" type="password" autocomplete="new-password" placeholder="在 pixstag.com 创建，留空保留已有 Key"><small class="subtle">填写后，她可以录说话的小视频发给你，需要先设定形象照。每条约需两到四分钟，会消耗视频积分。</small></label>
+          <label>视频 API Key <span id="video-state" class="subtle"></span><input id="videoApiKey" type="password" autocomplete="new-password" placeholder="在 pixstag.com 创建，留空保留已有 Key"><small class="subtle">填写后，她可以录说话的小视频发给你，需要先设定形象照。每条要等几分钟，会消耗视频积分。</small></label>
+          <label>视频模型<select id="videoModel"><option value="doubao-seedance-2-5">Seedance 2.5（更逼真，默认）</option><option value="doubao-seedance-2">Seedance 2</option><option value="MiniMax-H3">MiniMax H3（更省积分）</option></select><small class="subtle">实测 8 秒视频：Seedance 2.5 约 80 积分、7 分钟；MiniMax H3 约 5 积分、2 分钟。</small></label>
           <div class="actions"><button id="test-video" type="button" class="quiet">查询视频积分</button></div>
           <div class="actions"><button class="primary">保存设置</button><button id="test-model" type="button" class="quiet">测试连接</button></div>
           <p class="fine">Key 只保存在本机的私有配置文件中。对话和执行所需的内容会发送给你选择的模型服务，要念的话发送给豆包语音，画面描述和形象照发送给 1route.dev，视频台词、形象照和音色样本发送给 PixStag。</p>

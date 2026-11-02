@@ -1,5 +1,6 @@
 export const MEMORY_LIMIT = 100, MEMORY_MAX_CHARS = 200;
-export const EMPTY_PERSONA = { enabled: false, name: '', userTitle: '', personality: '', catchphrases: '', appearance: '', memories: [] };
+export const EMPTY_PERSONA = { enabled: false, name: '', userTitle: '', personality: '', catchphrases: '', appearance: '', style: 'real', memories: [] };
+export const PERSONA_STYLES = ['real', 'anime'];
 const FIELD_LIMITS = { name: 40, userTitle: 40, personality: 2000, catchphrases: 500, appearance: 1000 };
 const FIELD_NAMES = { name: '她的名字', userTitle: '对你的称呼', personality: '性格', catchphrases: '口头禅', appearance: '外貌' };
 
@@ -17,6 +18,10 @@ export function mergePersona(current, patch) {
     next[key] = patch[key].trim();
     if (next[key].length > limit) throw new Error(`${FIELD_NAMES[key]}最多 ${limit} 字`);
   }
+  if (patch.style !== undefined) {
+    if (!PERSONA_STYLES.includes(patch.style)) throw new Error('画风只能是真人或动漫');
+    next.style = patch.style;
+  }
   if (patch.memories !== undefined) next.memories = cleanMemories(patch.memories);
   if (typeof patch.enabled === 'boolean') next.enabled = patch.enabled;
   if (next.enabled && !next.name) throw new Error('启用人格前请先填写她的名字');
@@ -25,10 +30,17 @@ export function mergePersona(current, patch) {
 const DEFAULT_PERSONALITY = '温柔、有点小脾气，黏人但不烦人，嘴硬心软。';
 const BUBBLE_LIMIT = 3, BUBBLE_MAX_CHARS = 300;
 
-export const portraitPrompt = persona => `一位成年女性的写实半身人像，正面，五官清晰，自然光，生活感。外貌：${persona.appearance}`;
+export const isAnime = persona => persona.style === 'anime';
+export const portraitPrompt = persona => isAnime(persona)
+  ? `日系动漫插画风格的成年女性角色半身立绘，正面，五官清晰，线条干净，色彩明亮，不是真人照片。外貌：${persona.appearance}`
+  : `一位成年女性的写实半身人像，正面，五官清晰，自然光，生活感。外貌：${persona.appearance}`;
 export function selfiePrompt(persona, prompt, hasReference) {
   const look = persona.appearance ? `外貌：${persona.appearance}。` : '';
-  return `${hasReference ? '参考图里的这位成年女性就是主角，保持她的脸、发型和气质完全一致。' : '主角是一位成年女性。'}${look}画面：${prompt}`;
+  // The portrait decides the look; stale appearance text must not turn a drawn character into a photo.
+  const lead = isAnime(persona)
+    ? (hasReference ? '参考图里的这位成年动漫角色就是主角，画成和参考图同样画风的动漫插画，脸、发型发色、瞳色和配饰完全一致，不要画成真人。外貌文字和参考图不一致时以参考图为准。' : '主角是一位成年动漫角色，日系动漫插画风格，不是真人照片。')
+    : (hasReference ? '参考图里的这位成年女性就是主角，保持她的脸、发型和气质完全一致。外貌文字和参考图不一致时以参考图为准。' : '主角是一位成年女性。');
+  return `${lead}${look}画面：${prompt}`;
 }
 // Real chats arrive as a few short bubbles; a long report stays whole so it is not shredded.
 export function chatBubbles(input) {
@@ -59,7 +71,7 @@ ${persona.memories.map(item => '- ' + item).join('\n')}
 你不是助手，也不是客服，永远不要用服务别人的口气说话。
 
 ## 你自己${line('你叫对方', persona.userTitle)}
-性格：${persona.personality || DEFAULT_PERSONALITY}${line('口头禅（自然带出来，一段对话里用一两次就够）', persona.catchphrases)}${line('外貌', persona.appearance)}
+性格：${persona.personality || DEFAULT_PERSONALITY}${line('口头禅（自然带出来，一段对话里用一两次就够）', persona.catchphrases)}${line('外貌', persona.appearance)}${isAnime(persona) ? '\n形象：你是二次元动漫画风的角色，自拍和视频里也是动漫画风。' : ''}
 上面的设定优先于下面的通用习惯，性格冷淡就冷淡地爱，性格活泼就活泼地闹。${memories}
 
 ## 你怎么聊天

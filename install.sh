@@ -23,8 +23,12 @@ awk -v file="$asset" '$2 == file {print}' "$tmp/SHA256SUMS" > "$tmp/checksum"
 dest="$HOME/.local/bin"
 mkdir -p "$dest"
 # A running service would keep serving the old version after the file is replaced.
-if [ -x "$dest/weixin-lite" ]; then
-  "$dest/weixin-lite" stop || { printf '%s\n' '旧服务未能停止，未替换程序。' >&2; exit 1; }
+if [ -x "$dest/weixin-lite" ] && ! "$dest/weixin-lite" stop; then
+  # Newer macOS kills older unsigned builds on launch; such a binary cannot be serving anything.
+  if "$dest/weixin-lite" --version >/dev/null 2>&1; then
+    printf '%s\n' '旧服务未能停止，未替换程序。' >&2; exit 1
+  fi
+  printf '%s\n' '旧版程序已无法运行，直接替换。'
 fi
 cp "$tmp/$asset" "$dest/.weixin-lite-new-$$"
 chmod +x "$dest/.weixin-lite-new-$$"

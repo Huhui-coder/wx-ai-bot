@@ -207,7 +207,7 @@ Skill 是一个包含 `SKILL.md` 的目录，可附带 `scripts/`、`references/
 - 语音：在「连接设置」填写豆包语音的 App ID、Access Token 和音色，可以用 2.0 音色 ID，也可以用声音复刻得到的 `S_` 开头的 ID。没有配置视频时，她的语音以 mp3 文件发送，点开收听。
 - 生图：在「连接设置」填写 [1route.dev](https://www.1route.dev/keys) 的 API Key，程序按 Key 所属分组选择 GPT Image 或 Nano Banana。生成一张约需一到两分钟，图片和语音都在收件目录的 `AI生成` 文件夹里留一份。
 - 形象照：在「人格」页上传一张，或由 AI 生成后选定，之后的自拍和视频都以它为参考，长相才能保持一致。请只使用你有权使用的图片，不要上传真实他人或未成年人的照片。
-- 视频：在「连接设置」填写 [PixStag](https://pixstag.com) 的 API Key。她想哄你、撒娇或你想看她时，会根据当下的聊天现写台词、表演和场景，用形象照和你的音色生成一段说话的视频（MiniMax H3），每条约需两到四分钟，按时长消耗积分（实测 8 秒到 15 秒的视频约 6 到 10 积分）。视频失败时她会改发语音或文字。
+- 视频：在「连接设置」填写 [PixStag](https://pixstag.com) 的 API Key。她想哄你、撒娇或你想看她时，会根据当下的聊天现写台词、表演和场景，用形象照和你的音色生成一段说话的视频。默认模型是更逼真的 Seedance 2.5，实测 8 秒视频约 80 积分、等 7 分钟左右；在设置里可改用 MiniMax H3，8 到 15 秒约 6 到 10 积分、2 到 4 分钟。视频失败时她会改发语音或文字。
 
 为什么不是语音条：微信协议定义了语音消息，但程序发出的语音消息目前会被静默丢弃，接口返回成功，手机上什么也看不到（见 [Tencent/openclaw-weixin#215](https://github.com/Tencent/openclaw-weixin/issues/215)、[#209](https://github.com/Tencent/openclaw-weixin/issues/209)）。平台恢复前，语音只能走视频或文件。
 

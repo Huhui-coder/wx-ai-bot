@@ -6,6 +6,7 @@ import { imageDirectory } from './images.js';
 import { commandPrefixes } from './grants.js';
 import { EMPTY_PERSONA, MEMORY_LIMIT, MEMORY_MAX_CHARS, mergePersona } from './persona.js';
 import { DEFAULT_VOICE } from './voice.js';
+import { DEFAULT_VIDEO_MODEL, VIDEO_MODELS } from './video.js';
 
 export const dataDirectory = () => path.resolve(process.env.WEIXIN_LITE_HOME || path.join(os.homedir(), '.weixin-lite'));
 const HISTORY_LIMIT = 600, HISTORY_KEEP = 400;
@@ -29,7 +30,7 @@ export class Store {
       baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKey: '',
       workspace: process.cwd(), allowMutations: false, allowedCommands: [], vision: false,
       keepAwake: false, maxCommandMinutes: 30,
-      doubaoAppId: '', doubaoToken: '', doubaoVoice: DEFAULT_VOICE, imageApiKey: '', videoApiKey: '',
+      doubaoAppId: '', doubaoToken: '', doubaoVoice: DEFAULT_VOICE, imageApiKey: '', videoApiKey: '', videoModel: DEFAULT_VIDEO_MODEL,
       systemPrompt: '用中文沟通，回答简洁，先完成任务再汇报真实结果。',
       ...this.read('config', {}),
     };
@@ -73,9 +74,11 @@ export class Store {
   }
   saveConfig(patch) {
     const next = { ...this.config };
-    for (const k of ['baseUrl', 'model', 'apiKey', 'workspace', 'systemPrompt', 'imageDirectory', 'doubaoAppId', 'doubaoToken', 'doubaoVoice', 'imageApiKey', 'videoApiKey']) {
+    for (const k of ['baseUrl', 'model', 'apiKey', 'workspace', 'systemPrompt', 'imageDirectory', 'doubaoAppId', 'doubaoToken', 'doubaoVoice', 'imageApiKey', 'videoApiKey', 'videoModel']) {
       if (typeof patch[k] === 'string') next[k] = patch[k].trim();
     }
+    next.videoModel ||= DEFAULT_VIDEO_MODEL;
+    if (!VIDEO_MODELS.includes(next.videoModel)) throw new Error('不支持的视频模型');
     for (const k of ['allowMutations', 'vision', 'keepAwake']) {
       if (typeof patch[k] === 'boolean') next[k] = patch[k];
     }

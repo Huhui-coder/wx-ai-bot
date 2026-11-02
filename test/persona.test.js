@@ -292,7 +292,7 @@ test('a video is written fresh each time and carries her face and voice', async 
   assert.equal(f.log.api[0].media_type, 2); assert.equal(f.log.items[0].type, 5);
   assert.ok(f.log.items[0].video_item.video_size > 0);
   const { body } = video.log.creates[0];
-  assert.equal(body.model, 'MiniMax-H3'); assert.equal(body.duration, videoSeconds(videoArgs.dialogue));
+  assert.equal(body.model, 'doubao-seedance-2-5'); assert.equal(body.duration, videoSeconds(videoArgs.dialogue));
   for (const part of ['笨蛋，抱抱我', '委屈地嘟嘴', '深夜的卧室', '成年', '看不到手机', '黑色长发', '近距离']) assert.ok(body.content[0].text.includes(part), part);
   assert.equal(body.content[1].role, 'reference_image'); assert.equal(body.content[1].image_url.url, png.toString('base64'));
   assert.equal(body.content[2].role, 'reference_audio'); assert.equal(Buffer.from(body.content[2].audio_url.url, 'base64').toString(), 'mp3-audio');
@@ -302,6 +302,11 @@ test('a video is written fresh each time and carries her face and voice', async 
   f.wx.status = 'stopped';
   await assert.rejects(f.tools.execute('send_video', videoArgs, f.context()), /已暂停/);
   assert.equal(video.log.creates.length, 1);
+  f.wx.status = 'connected';
+  assert.throws(() => f.store.saveConfig({ videoModel: 'sora' }), /视频模型/);
+  f.store.saveConfig({ videoModel: 'MiniMax-H3' });
+  await f.tools.execute('send_video', videoArgs, f.context());
+  assert.equal(video.log.creates[1].body.model, 'MiniMax-H3');
 });
 
 test('the voice sample is reused until the voice changes', async t => {
@@ -348,6 +353,19 @@ test('an uploaded portrait replaces the saved one and rejects anything else', as
 test('video length follows the dialogue and stays inside the supported range', () => {
   assert.equal(videoSeconds('嗯'), 4); assert.equal(videoSeconds('字'.repeat(24)), 8); assert.equal(videoSeconds('字'.repeat(60)), 15);
   assert.match(videoPrompt(videoArgs), /「笨蛋，抱抱我」/);
+  assert.match(videoPrompt(videoArgs), /真实生活感/);
+  const drawn = videoPrompt({ ...videoArgs, style: 'anime', appearance: '黑色长发' });
+  assert.match(drawn, /动漫画风/); assert.match(drawn, /不要变成真人/); assert.doesNotMatch(drawn, /真实生活感/); assert.match(drawn, /以参考图为准/);
+});
+
+test('an anime persona keeps every picture and video drawn', async () => {
+  const { EMPTY_PERSONA, mergePersona, portraitPrompt, selfiePrompt } = await import('../src/persona.js');
+  const anime = mergePersona(PERSONA, { style: 'anime' });
+  assert.equal(EMPTY_PERSONA.style, 'real');
+  assert.throws(() => mergePersona(PERSONA, { style: 'oil' }), /画风/);
+  assert.match(portraitPrompt(anime), /动漫插画/); assert.doesNotMatch(portraitPrompt(anime), /写实/);
+  assert.match(selfiePrompt(anime, '在海边', true), /不要画成真人/);
+  assert.match(personaPrompt(anime), /二次元/); assert.doesNotMatch(personaPrompt(PERSONA), /二次元/);
 });
 
 test('a paid video job is never submitted twice', async t => {

@@ -2,7 +2,7 @@ const $ = id => document.getElementById(id);
 const auth = location.hash.slice(1) || sessionStorage.getItem('weixin-lite-token') || '';
 if (location.hash) { sessionStorage.setItem('weixin-lite-token', auth); history.replaceState(null, '', location.pathname); }
 let state, loaded = false, disconnected = false, qrValue = '', messagesKey = '', remindersKey = '', toastTimer, memoriesDirty = false, portraitSaved = false;
-const PERSONA_FIELDS = { personaName: 'name', personaTitle: 'userTitle', personaPersonality: 'personality', personaCatchphrases: 'catchphrases', personaAppearance: 'appearance' };
+const PERSONA_FIELDS = { personaName: 'name', personaTitle: 'userTitle', personaPersonality: 'personality', personaCatchphrases: 'catchphrases', personaAppearance: 'appearance', personaStyle: 'style' };
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
 async function api(route, data) {
   const response = await fetch('/api/' + route, { method: data === undefined ? 'GET' : 'POST',
@@ -55,7 +55,7 @@ function renderReminders(data) {
     return card;
   }) : [el('div', 'empty', '还没有提醒。可以在微信里说：“10 分钟后提醒我总结日报。”')]));
 }
-const CONFIG_FIELDS = ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory', 'doubaoAppId', 'doubaoVoice'];
+const CONFIG_FIELDS = ['baseUrl', 'model', 'workspace', 'systemPrompt', 'imageDirectory', 'doubaoAppId', 'doubaoVoice', 'videoModel'];
 function showPortrait(image, alt) { const node = el('img'); node.src = image; node.alt = alt; $('portrait-box').replaceChildren(node); }
 async function loadPortrait() {
   const { image } = await api('persona/portrait'); portraitSaved = Boolean(image);

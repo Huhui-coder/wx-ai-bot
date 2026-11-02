@@ -58,10 +58,10 @@ export const definitions = [
     selfie: field('画面主角是你本人（自拍、生活照）时为 true，程序会用形象照保持长相一致；风景、美食等为 false', 'boolean'),
     orientation: { type: 'string', enum: ['square', 'portrait', 'landscape'], description: '画幅：square 方图（默认），portrait 竖图，landscape 横图' },
   }, ['prompt']),
-  tool('send_video', '录一段你本人对着镜头说话的短视频发到用户绑定的微信。长相按形象照，声音按你的音色，大约需要两到四分钟，每条都会消耗视频额度。三个参数都要根据此刻的聊天现写，不能重复以前写过的内容。', {
+  tool('send_video', '录一段你本人对着镜头说话的短视频发到用户绑定的微信。长相按形象照，声音按你的音色，要等好几分钟，每条都会消耗不少视频额度。三个参数都要根据此刻的聊天现写，不能重复以前写过的内容。', {
     dialogue: field('你在视频里说的话，最多 60 字。口语，接得上刚才的聊天，只写念出来的内容'),
     acting: field('此刻的情绪、表情和动作，写具体，例如：先委屈地嘟嘴，歪头看着镜头，说到一半忍不住笑出来'),
-    scene: field('你现在在哪、穿什么、光线怎样，要符合当前时间和聊天内容，例如：深夜窝在床上，穿着睡衣，只开了一盏暖黄的床头灯'),
+    scene: field('你现在在哪、在做什么、光线怎样，要符合当前时间和聊天内容。不写长相、发型和发色，这些以形象照为准，例如：深夜窝在床上，只开了一盏暖黄的床头灯'),
   }, ['dialogue', 'acting', 'scene']),
   tool('remember', '把用户提到的、值得长期记住的事存入记忆，例如喜好、重要日子、约定。用户可在人格页查看和修改。不要存密码、密钥和验证码。', {
     text: field('一条完整的记忆，最多 200 字，例如：用户对花生过敏'),
@@ -161,7 +161,7 @@ export class Tools {
   async film({ dialogue, acting, scene }, signal) {
     const portrait = await this.portrait();
     if (!portrait) throw new Error('还没有形象照，请用户先到人格页设定');
-    return generateVideo({ apiKey: this.store.config.videoApiKey, prompt: videoPrompt({ dialogue, acting, scene, appearance: this.store.persona.appearance }), seconds: videoSeconds(dialogue),
+    return generateVideo({ apiKey: this.store.config.videoApiKey, model: this.store.config.videoModel, prompt: videoPrompt({ dialogue, acting, scene, appearance: this.store.persona.appearance, style: this.store.persona.style }), seconds: videoSeconds(dialogue),
       portrait: compactReference(portrait, REFERENCE_TARGET_BYTES), voiceSample: await this.voiceSample(signal).catch(() => null) }, { fetcher: this.fetcher, signal, ...this.pollOptions });
   }
   async paint({ prompt, orientation, reference, idempotencyKey, compact }, signal) {
