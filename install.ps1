@@ -3,7 +3,7 @@ if (-not [Environment]::Is64BitOperatingSystem) { throw '需要 64 位 Windows�
 $repo = 'Huhui-coder/wx-ai-bot'
 $asset = 'weixin-lite-windows-x64.exe'
 # Pinned: "latest" belongs to the plain assistant on main.
-$base = "https://github.com/$repo/releases/download/v0.7.0-girlfriend"
+$base = "https://github.com/$repo/releases/download/v0.7.1-girlfriend"
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) ('weixin-lite-' + [Guid]::NewGuid().ToString('N'))
 $dest = Join-Path $env:LOCALAPPDATA 'WeixinLite'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

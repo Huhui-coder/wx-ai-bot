@@ -13,7 +13,7 @@ esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 # Pinned: "latest" belongs to the plain assistant on main.
-base="https://github.com/$repo/releases/download/v0.7.0-girlfriend"
+base="https://github.com/$repo/releases/download/v0.7.1-girlfriend"
 printf '%s\n' '正在下载赛博女友…'
 curl -fL --retry 3 "$base/$asset" -o "$tmp/$asset"
 curl -fsSL --retry 3 "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
